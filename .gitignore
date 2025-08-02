@@ -209,4 +209,7 @@ __marimo__/
 
 # Project related files
 *ics
+*.csv
 .md
+.idea
+.DS_Store
