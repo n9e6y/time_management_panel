@@ -101,23 +101,28 @@ def process_ics_to_csv(ics_path, csv_path, cat_delimiter, subcat_delimiter, star
             if recurring_events:
                 all_events.extend(recurring_events)
 
+    # Define column order early to use for empty dataframes
+    column_order = [
+        'date', 'day_of_week', 'day_type', 'start_time', 'end_time', 'duration_minutes',
+        'category', 'subcategory_1', 'subcategory_2', 'subcategory_3', 'is_focus_session',
+        'full_summary', 'start_datetime', 'end_datetime'
+    ]
+
     if not all_events:
-        print("No valid events found in the calendar.")
+        print("No events found in the calendar file. Creating an empty CSV.")
+        empty_df = pd.DataFrame(columns=column_order)
+        os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+        empty_df.to_csv(csv_path, index=False, encoding='utf-8')
         return
 
-    # --- LOGIC FIX: Split events that cross midnight boundaries ---
     expanded_events = []
     for event in all_events:
         s = event['start_datetime']
         e = event['end_datetime']
-
         if s.date() == e.date() or (
                 e.hour == 0 and e.minute == 0 and e.second == 0 and (e.date() - s.date()).days == 1):
-            # Handle normal events and events that end exactly at midnight
             expanded_events.append(event)
             continue
-
-        # Handle multi-day events by splitting them
         current_time = s
         while current_time.date() < e.date():
             day_end = current_time.replace(hour=23, minute=59, second=59)
@@ -126,14 +131,11 @@ def process_ics_to_csv(ics_path, csv_path, cat_delimiter, subcat_delimiter, star
             split_event['end_datetime'] = day_end
             expanded_events.append(split_event)
             current_time = day_end + timedelta(seconds=1)
-
-        # Add the final part of the event on the last day
         if current_time < e:
             last_part_event = event.copy()
             last_part_event['start_datetime'] = current_time
             last_part_event['end_datetime'] = e
             expanded_events.append(last_part_event)
-    # --- END OF LOGIC FIX ---
 
     df = pd.DataFrame(expanded_events)
     df['start_datetime'] = pd.to_datetime(df['start_datetime'])
@@ -141,8 +143,12 @@ def process_ics_to_csv(ics_path, csv_path, cat_delimiter, subcat_delimiter, star
 
     df = df[(df['start_datetime'] < end_date) & (df['end_datetime'] > start_date)].copy()
 
+    # --- LOGIC FIX: Handle case where no events fall in the selected range ---
     if df.empty:
-        print("No events found overlapping with the specified date range.")
+        print("No events found in the specified date range. Creating an empty CSV.")
+        empty_df = pd.DataFrame(columns=column_order)
+        os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+        empty_df.to_csv(csv_path, index=False, encoding='utf-8')
         return
 
     df['start_datetime'] = df['start_datetime'].clip(lower=start_date)
@@ -150,7 +156,6 @@ def process_ics_to_csv(ics_path, csv_path, cat_delimiter, subcat_delimiter, star
 
     df['duration_minutes'] = (df['end_datetime'] - df['start_datetime']).dt.total_seconds() / 60
 
-    # Filter out events with very short duration after clipping
     df = df[df['duration_minutes'] > 0.1]
 
     df['date'] = df['start_datetime'].dt.date
@@ -165,11 +170,6 @@ def process_ics_to_csv(ics_path, csv_path, cat_delimiter, subcat_delimiter, star
     is_long_enough = df['duration_minutes'] >= focus_minutes
     df['is_focus_session'] = is_focus_category & is_long_enough
 
-    column_order = [
-        'date', 'day_of_week', 'day_type', 'start_time', 'end_time', 'duration_minutes',
-        'category', 'subcategory_1', 'subcategory_2', 'subcategory_3', 'is_focus_session',
-        'full_summary', 'start_datetime', 'end_datetime'
-    ]
     df = df[column_order]
 
     os.makedirs(os.path.dirname(csv_path), exist_ok=True)

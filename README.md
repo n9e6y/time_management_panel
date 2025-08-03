@@ -5,7 +5,10 @@
 
 <!-- It's highly recommended to add a screenshot of your app here -->
 
-<!-- ![App Screenshot](screenshot.png) -->
+<div align="center">
+  <img src="intro.gif" alt="App Screenshot" width="400"/>
+</div>
+
 
 ## Features
 
@@ -118,7 +121,7 @@ streamlit run src/app.py
 
 ---
 
-** Folder Structure (suggested)**
+## Folder Structure
 
 ```
 .
