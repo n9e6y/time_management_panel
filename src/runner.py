@@ -19,7 +19,10 @@ DEFAULT_FOCUS_CATEGORIES = ['work', 'learning', 'learn', 'project']
 DEFAULT_FOCUS_MINUTES = 90
 
 
-def parse_event(event, cat_delimiter, subcat_delimiter, analysis_start, analysis_end):
+def parse_event(event, cat_delimiter, subcat_delimiter):
+    """
+    Parses the raw data from an event component without calculating duration yet.
+    """
     summary = event.get('summary')
     start_dt = event.get('dtstart').dt
     end_dt = event.get('dtend').dt
@@ -43,13 +46,9 @@ def parse_event(event, cat_delimiter, subcat_delimiter, analysis_start, analysis
     if not isinstance(start_dt, datetime) or not isinstance(end_dt, datetime):
         return None, []
 
-    duration = end_dt - start_dt
-    duration_minutes = round(duration.total_seconds() / 60)
-
     record = {
         'start_datetime': start_dt,
         'end_datetime': end_dt,
-        'duration_minutes': duration_minutes,
         'category': category,
         'subcategory_1': subcategories[0] if len(subcategories) > 0 else None,
         'subcategory_2': subcategories[1] if len(subcategories) > 1 else None,
@@ -59,7 +58,7 @@ def parse_event(event, cat_delimiter, subcat_delimiter, analysis_start, analysis
 
     if 'rrule' in event:
         rrule_end = datetime.now(pytz.utc) + timedelta(days=365)
-        # Use a wide window for recurrence calculation, then filter later
+        duration = end_dt - start_dt
         occurrences = event.get('rrule').rrule.between(datetime(2020, 1, 1, tzinfo=pytz.utc), rrule_end)
 
         event_records = []
@@ -71,7 +70,6 @@ def parse_event(event, cat_delimiter, subcat_delimiter, analysis_start, analysis
             event_records.append(occ_record)
         return None, event_records
     else:
-        # For non-recurring, we'll filter them all at the end
         return record, []
 
 
@@ -96,8 +94,7 @@ def process_ics_to_csv(ics_path, csv_path, cat_delimiter, subcat_delimiter, star
     all_events = []
     for component in cal.walk():
         if component.name == "VEVENT":
-            single_event, recurring_events = parse_event(component, cat_delimiter, subcat_delimiter, start_date,
-                                                         end_date)
+            single_event, recurring_events = parse_event(component, cat_delimiter, subcat_delimiter)
 
             if single_event:
                 all_events.append(single_event)
@@ -108,14 +105,53 @@ def process_ics_to_csv(ics_path, csv_path, cat_delimiter, subcat_delimiter, star
         print("No valid events found in the calendar.")
         return
 
-    df = pd.DataFrame(all_events)
-    # Ensure datetime conversion
+    # --- LOGIC FIX: Split events that cross midnight boundaries ---
+    expanded_events = []
+    for event in all_events:
+        s = event['start_datetime']
+        e = event['end_datetime']
+
+        if s.date() == e.date() or (
+                e.hour == 0 and e.minute == 0 and e.second == 0 and (e.date() - s.date()).days == 1):
+            # Handle normal events and events that end exactly at midnight
+            expanded_events.append(event)
+            continue
+
+        # Handle multi-day events by splitting them
+        current_time = s
+        while current_time.date() < e.date():
+            day_end = current_time.replace(hour=23, minute=59, second=59)
+            split_event = event.copy()
+            split_event['start_datetime'] = current_time
+            split_event['end_datetime'] = day_end
+            expanded_events.append(split_event)
+            current_time = day_end + timedelta(seconds=1)
+
+        # Add the final part of the event on the last day
+        if current_time < e:
+            last_part_event = event.copy()
+            last_part_event['start_datetime'] = current_time
+            last_part_event['end_datetime'] = e
+            expanded_events.append(last_part_event)
+    # --- END OF LOGIC FIX ---
+
+    df = pd.DataFrame(expanded_events)
     df['start_datetime'] = pd.to_datetime(df['start_datetime'])
-    df = df[(df['start_datetime'] >= start_date) & (df['start_datetime'] <= end_date)]
+    df['end_datetime'] = pd.to_datetime(df['end_datetime'])
+
+    df = df[(df['start_datetime'] < end_date) & (df['end_datetime'] > start_date)].copy()
 
     if df.empty:
-        print("No events found in the specified date range.")
+        print("No events found overlapping with the specified date range.")
         return
+
+    df['start_datetime'] = df['start_datetime'].clip(lower=start_date)
+    df['end_datetime'] = df['end_datetime'].clip(upper=end_date)
+
+    df['duration_minutes'] = (df['end_datetime'] - df['start_datetime']).dt.total_seconds() / 60
+
+    # Filter out events with very short duration after clipping
+    df = df[df['duration_minutes'] > 0.1]
 
     df['date'] = df['start_datetime'].dt.date
     df['day_of_week'] = df['start_datetime'].dt.day_name()
@@ -155,7 +191,6 @@ def main():
                         help=f"List of focus categories.")
     parser.add_argument('--focus_minutes', type=int, default=DEFAULT_FOCUS_MINUTES,
                         help=f"Minimum duration for a focus session.")
-    # New arguments for custom date ranges
     parser.add_argument('--start_date', type=str, default=None,
                         help="Start date for analysis (YYYY-MM-DD). Overrides --period.")
     parser.add_argument('--end_date', type=str, default=None,
@@ -163,12 +198,10 @@ def main():
 
     args = parser.parse_args()
 
-    # Determine date range
     if args.start_date and args.end_date:
         try:
             start_date = pytz.utc.localize(datetime.strptime(args.start_date, '%Y-%m-%d'))
             end_date = pytz.utc.localize(datetime.strptime(args.end_date, '%Y-%m-%d'))
-            # Set end_date to the very end of the selected day
             end_date = end_date.replace(hour=23, minute=59, second=59)
         except ValueError:
             print("Error: Invalid date format. Please use YYYY-MM-DD.")

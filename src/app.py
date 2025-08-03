@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 # --- Page Configuration ---
 st.set_page_config(
     page_title="Time Analyzer Dashboard",
-    page_icon="🗓️",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -62,11 +62,10 @@ def run_parser_script(cat_delimiter, subcat_delimiter, weekdays, focus_categorie
 
 # --- Sidebar ---
 with st.sidebar:
-    st.title("Settings")
+    st.header("Settings")
     uploaded_file = st.file_uploader("Upload Calendar", type=['ics'])
 
-    with st.expander("Parser & Feature Settings", expanded=True , icon='⚙️'):
-        # --- Date Range Selection ---
+    with st.expander("⚙️ Parser & Feature Settings", expanded=True):
         date_option = st.radio("Select Date Range", ('Preset Period', 'Custom Range'), horizontal=True,
                                label_visibility="collapsed")
 
@@ -83,14 +82,17 @@ with st.sidebar:
             with col2:
                 end_date_input = st.date_input("End date", datetime.now())
 
-        # --- Other Settings ---
         weekdays = st.multiselect("Weekdays", ALL_DAYS, default=DEFAULT_WEEKDAYS)
         cat_delimiter = st.text_input("Category Delimiter", ":")
         subcat_delimiter = st.text_input("Sub-category Delimiter", "-")
         focus_categories_str = st.text_input("Focus Categories", "work, learning, learn, project")
         focus_minutes = st.number_input("Min. Focus Duration (minutes)", min_value=1, value=90)
 
-    if st.button("Start", type="primary", use_container_width=True):
+    st.header("Display Options")
+    show_untracked = st.toggle("Show untracked time", value=True,
+                               help="Adds an 'untracked' category to fill the remaining hours of each day.")
+
+    if st.button("Analyze My Time", type="primary", use_container_width=True):
         if uploaded_file is not None:
             os.makedirs(INPUT_ICS_DIR, exist_ok=True)
             for f in os.listdir(INPUT_ICS_DIR):
@@ -102,13 +104,24 @@ with st.sidebar:
             focus_categories = [cat.strip().lower() for cat in focus_categories_str.split(',')]
 
             success = False
+            # --- LOGIC FIX: Store the analysis date range in session state ---
             if date_option == 'Preset Period':
+                period_map = {
+                    '1w': 7, '2w': 14, '1m': 30, '3m': 90,
+                    '6m': 182, '1y': 365, '2y': 730, '5y': 1825
+                }
+                # FIX: Ensure we store date objects consistently
+                st.session_state.start_date = (datetime.now() - timedelta(days=period_map[period])).date()
+                st.session_state.end_date = datetime.now().date()
                 success = run_parser_script(cat_delimiter, subcat_delimiter, weekdays, focus_categories, focus_minutes,
                                             period=period)
             else:
                 if start_date_input > end_date_input:
                     st.error("Error: Start date cannot be after end date.")
                 else:
+                    # FIX: start_date_input is already a date object
+                    st.session_state.start_date = start_date_input
+                    st.session_state.end_date = end_date_input
                     success = run_parser_script(cat_delimiter, subcat_delimiter, weekdays, focus_categories,
                                                 focus_minutes,
                                                 start_date=start_date_input.strftime('%Y-%m-%d'),
@@ -118,20 +131,49 @@ with st.sidebar:
         else:
             st.warning("Please upload an .ics file first.")
 
-    st.header("About")
+    st.subheader("About")
     st.info("This project provides a personal dashboard to analyze your time based on your calendar data.")
 
-
 # --- Main Dashboard ---
-st.title("📅 Your Dashboard")
+st.title("📅 Your Time Dashboard")
 
 if os.path.exists(OUTPUT_CSV_PATH):
     df = pd.read_csv(OUTPUT_CSV_PATH, parse_dates=['start_datetime', 'end_datetime'])
+    df['date'] = pd.to_datetime(df['date']).dt.date
     df['subcategory_1'] = df['subcategory_1'].fillna('no subcategory')
     df['hours'] = df['duration_minutes'] / 60
 
-    start_date_str = df['start_datetime'].min().strftime('%d %b %Y')
-    end_date_str = df['start_datetime'].max().strftime('%d %b %Y')
+    # --- Handle Untracked Time ---
+    if show_untracked and 'start_date' in st.session_state:
+        # --- LOGIC FIX: Use the full date range from session state ---
+        # FIX: Remove the unnecessary .date() call
+        analysis_start_date = st.session_state.start_date
+        analysis_end_date = st.session_state.end_date
+        all_days_in_range = pd.date_range(start=analysis_start_date, end=analysis_end_date, freq='D')
+
+        tracked_hours_per_day = df.groupby('date')['hours'].sum()
+        untracked_data = []
+
+        for day in all_days_in_range:
+            day = day.date()  # Convert timestamp to date object
+            tracked_hours = tracked_hours_per_day.get(day, 0)  # Get tracked hours, default to 0 if day is missing
+            untracked_hours = 24 - tracked_hours
+            if untracked_hours > 0.01:
+                untracked_data.append({
+                    'date': day,
+                    'day_of_week': day.strftime('%A'),
+                    'day_type': 'Weekday' if day.strftime('%A') in weekdays else 'Weekend',
+                    'hours': untracked_hours,
+                    'category': 'untracked',
+                    'subcategory_1': 'untracked',
+                    'is_focus_session': False,
+                })
+        if untracked_data:
+            untracked_df = pd.DataFrame(untracked_data)
+            df = pd.concat([df, untracked_df], ignore_index=True)
+
+    start_date_str = pd.to_datetime(df['date']).min().strftime('%d %b %Y')
+    end_date_str = pd.to_datetime(df['date']).max().strftime('%d %b %Y')
     st.markdown(f"### Visualizing your time from **{start_date_str}** to **{end_date_str}**")
     st.markdown("---")
 
@@ -139,18 +181,19 @@ if os.path.exists(OUTPUT_CSV_PATH):
     col1, col2 = st.columns(2)
     with col1:
         total_hours = df['hours'].sum()
-        st.metric(label="Total Hours Tracked", value=f"{total_hours:.1f} hrs")
-        focus_sessions = df['is_focus_session'].sum()
+        metric_label = "Total Hours Accounted For" if show_untracked else "Total Hours Tracked"
+        st.metric(label=metric_label, value=f"{total_hours:.1f} hrs")
+        focus_sessions = df[df['is_focus_session'] == True]['is_focus_session'].sum()
         st.metric(label="Total Focus Sessions", value=f"{int(focus_sessions)}")
 
     with col2:
-        st.subheader("Top 3 Categories")
-        top_categories = df.groupby('category')['hours'].sum().nlargest(3).round(1)
+        st.subheader("Top 3 Tracked Categories")
+        top_categories = df[df['category'] != 'untracked'].groupby('category')['hours'].sum().nlargest(3).round(1)
         st.dataframe(top_categories.rename("Hours"), use_container_width=True)
 
     st.markdown("---")
 
-    # st.header("Visualizations")
+    st.header("Visualizations")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -158,31 +201,33 @@ if os.path.exists(OUTPUT_CSV_PATH):
         category_time = df.groupby(['category', 'subcategory_1'])['hours'].sum().reset_index()
         fig = px.bar(category_time, x='hours', y='category', color='subcategory_1', orientation='h',
                      labels={'hours': 'Total Hours', 'category': 'Category', 'subcategory_1': 'Subcategory'},
-                     height=720)
+                     height=400)
         fig.update_layout(margin=dict(l=20, r=20, t=30, b=20), yaxis={'categoryorder': 'total ascending'})
         st.plotly_chart(fig, use_container_width=True)
 
     with col2:
         st.subheader("Weekday vs Weekend Breakdown")
         day_type_time = df.groupby(['day_type', 'category'])['hours'].sum().reset_index()
-        fig = px.bar(day_type_time, x='day_type', y='hours', color='category',
-                     labels={'hours': 'Total Hours', 'day_type': 'Day Type', 'category': 'Category'}, height=720)
+        fig = px.bar(day_type_time, x='day_type', y='hours', color='category', title="Time Distribution by Category",
+                     labels={'hours': 'Total Hours', 'day_type': 'Day Type', 'category': 'Category'})
         fig.update_layout(margin=dict(l=20, r=20, t=40, b=20))
         st.plotly_chart(fig, use_container_width=True)
 
     col3, col4 = st.columns(2)
     with col3:
-        st.subheader("Category Breakdown")
-        fig = px.sunburst(df, path=['category', 'subcategory_1'], values='hours', height=600)
+        st.subheader("Category Breakdown (Sunburst)")
+        fig = px.sunburst(df, path=['category', 'subcategory_1'], values='hours', height=400)
         fig.update_layout(margin=dict(l=20, r=20, t=30, b=20))
         st.plotly_chart(fig, use_container_width=True)
 
     with col4:
-        st.subheader("Average Day")
-        # Calculate number of unique days in the dataframe
-        num_days = df['date'].nunique()
+        st.subheader("An Average Day")
+        num_days = (
+                               st.session_state.end_date - st.session_state.start_date).days + 1 if 'start_date' in st.session_state else \
+        df['date'].nunique()
         avg_daily_time = df.groupby('category')['hours'].sum() / num_days
-        fig = px.pie(avg_daily_time, values=avg_daily_time.values, names=avg_daily_time.index, height=600)
+        fig = px.pie(avg_daily_time, values=avg_daily_time.values, names=avg_daily_time.index,
+                     title="Average Hours per Day", hole=0.4)
         fig.update_traces(textinfo='percent+label', hoverinfo='label+value')
         fig.update_layout(margin=dict(l=20, r=20, t=40, b=20))
         st.plotly_chart(fig, use_container_width=True)
