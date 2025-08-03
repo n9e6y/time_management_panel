@@ -7,10 +7,7 @@ import argparse
 
 # --- Path Configuration (Robust Method) ---
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
-# Get the base directory of the project (the parent of src)
 BASE_DIR = os.path.dirname(SRC_DIR)
-
-# --- Static Paths ---
 INPUT_ICS_DIR = os.path.join(BASE_DIR, 'data', 'ics')
 OUTPUT_CSV_PATH = os.path.join(BASE_DIR, 'data', 'output', 'calendar.csv')
 
@@ -23,9 +20,6 @@ DEFAULT_FOCUS_MINUTES = 90
 
 
 def parse_event(event, cat_delimiter, subcat_delimiter, analysis_start, analysis_end):
-    """
-    Extracts, cleans, and structures data from a single calendar event component.
-    """
     summary = event.get('summary')
     start_dt = event.get('dtstart').dt
     end_dt = event.get('dtend').dt
@@ -38,13 +32,13 @@ def parse_event(event, cat_delimiter, subcat_delimiter, analysis_start, analysis
     if isinstance(end_dt, datetime) and end_dt.tzinfo is None:
         end_dt = pytz.utc.localize(end_dt)
 
-    category = summary.strip()
+    category = summary.strip().lower()
     subcategories = []
     if cat_delimiter in summary:
         parts = summary.split(cat_delimiter, 1)
-        category = parts[0].strip()
+        category = parts[0].strip().lower()
         subcategory_str = parts[1].strip()
-        subcategories = [s.strip() for s in subcategory_str.split(subcat_delimiter)]
+        subcategories = [s.strip().lower() for s in subcategory_str.split(subcat_delimiter)]
 
     if not isinstance(start_dt, datetime) or not isinstance(end_dt, datetime):
         return None, []
@@ -65,7 +59,8 @@ def parse_event(event, cat_delimiter, subcat_delimiter, analysis_start, analysis
 
     if 'rrule' in event:
         rrule_end = datetime.now(pytz.utc) + timedelta(days=365)
-        occurrences = event.get('rrule').rrule.between(analysis_start, rrule_end)
+        # Use a wide window for recurrence calculation, then filter later
+        occurrences = event.get('rrule').rrule.between(datetime(2020, 1, 1, tzinfo=pytz.utc), rrule_end)
 
         event_records = []
         for occ_start in occurrences:
@@ -76,13 +71,11 @@ def parse_event(event, cat_delimiter, subcat_delimiter, analysis_start, analysis
             event_records.append(occ_record)
         return None, event_records
     else:
-        if start_dt >= analysis_start and start_dt <= analysis_end:
-            return record, []
-        return None, []
+        # For non-recurring, we'll filter them all at the end
+        return record, []
 
 
 def find_ics_file(directory):
-    """Finds the first file with a .ics extension in a given directory."""
     os.makedirs(directory, exist_ok=True)
     for filename in os.listdir(directory):
         if filename.lower().endswith('.ics'):
@@ -93,7 +86,6 @@ def find_ics_file(directory):
 
 def process_ics_to_csv(ics_path, csv_path, cat_delimiter, subcat_delimiter, start_date, end_date, weekdays,
                        focus_categories, focus_minutes):
-    """Main function to read an ICS file, add features, and convert to a structured CSV."""
     try:
         with open(ics_path, 'r', encoding='utf-8') as f:
             cal = Calendar.from_ical(f.read())
@@ -117,6 +109,8 @@ def process_ics_to_csv(ics_path, csv_path, cat_delimiter, subcat_delimiter, star
         return
 
     df = pd.DataFrame(all_events)
+    # Ensure datetime conversion
+    df['start_datetime'] = pd.to_datetime(df['start_datetime'])
     df = df[(df['start_datetime'] >= start_date) & (df['start_datetime'] <= end_date)]
 
     if df.empty:
@@ -149,37 +143,46 @@ def process_ics_to_csv(ics_path, csv_path, cat_delimiter, subcat_delimiter, star
 
 
 def main():
-    """Parses command-line arguments and runs the calendar processing."""
     parser = argparse.ArgumentParser(
         description="Process an .ics calendar file into a CSV with engineered features for analysis.")
-
     parser.add_argument('--period', type=str, default='1m', choices=['1w', '2w', '1m', '3m', '6m', '1y', '2y', '5y'],
-                        help="Set the analysis period (e.g., '1w' for 1 week).")
-    parser.add_argument('--cat_delimiter', type=str, default=DEFAULT_CATEGORY_DELIMITER,
-                        help=f"The character separating the main category. Defaults to '{DEFAULT_CATEGORY_DELIMITER}'.")
+                        help="Set the analysis period.")
+    parser.add_argument('--cat_delimiter', type=str, default=DEFAULT_CATEGORY_DELIMITER, help=f"Category delimiter.")
     parser.add_argument('--subcat_delimiter', type=str, default=DEFAULT_SUBCATEGORY_DELIMITER,
-                        help=f"The character separating subcategories. Defaults to '{DEFAULT_SUBCATEGORY_DELIMITER}'.")
-
-    parser.add_argument('--weekdays', nargs='+', default=DEFAULT_WEEKDAYS,
-                        help=f"List of days to be considered weekdays. Defaults to: {DEFAULT_WEEKDAYS}")
+                        help=f"Subcategory delimiter.")
+    parser.add_argument('--weekdays', nargs='+', default=DEFAULT_WEEKDAYS, help=f"List of weekdays.")
     parser.add_argument('--focus_categories', nargs='+', default=DEFAULT_FOCUS_CATEGORIES,
-                        help=f"List of categories to count as 'focus work'. Defaults to: {DEFAULT_FOCUS_CATEGORIES}")
+                        help=f"List of focus categories.")
     parser.add_argument('--focus_minutes', type=int, default=DEFAULT_FOCUS_MINUTES,
-                        help=f"Minimum duration in minutes for an event to be a focus session. Defaults to {DEFAULT_FOCUS_MINUTES}.")
+                        help=f"Minimum duration for a focus session.")
+    # New arguments for custom date ranges
+    parser.add_argument('--start_date', type=str, default=None,
+                        help="Start date for analysis (YYYY-MM-DD). Overrides --period.")
+    parser.add_argument('--end_date', type=str, default=None,
+                        help="End date for analysis (YYYY-MM-DD). Overrides --period.")
 
     args = parser.parse_args()
 
-    end_date = datetime.now(pytz.utc)
-    period_map = {
-        '1w': timedelta(weeks=1), '2w': timedelta(weeks=2), '1m': timedelta(days=30),
-        '3m': timedelta(days=90), '6m': timedelta(days=182), '1y': timedelta(days=365),
-        '2y': timedelta(days=730), '5y': timedelta(days=1825)
-    }
-    start_date = end_date - period_map[args.period]
+    # Determine date range
+    if args.start_date and args.end_date:
+        try:
+            start_date = pytz.utc.localize(datetime.strptime(args.start_date, '%Y-%m-%d'))
+            end_date = pytz.utc.localize(datetime.strptime(args.end_date, '%Y-%m-%d'))
+            # Set end_date to the very end of the selected day
+            end_date = end_date.replace(hour=23, minute=59, second=59)
+        except ValueError:
+            print("Error: Invalid date format. Please use YYYY-MM-DD.")
+            return
+    else:
+        end_date = datetime.now(pytz.utc)
+        period_map = {
+            '1w': timedelta(weeks=1), '2w': timedelta(weeks=2), '1m': timedelta(days=30),
+            '3m': timedelta(days=90), '6m': timedelta(days=182), '1y': timedelta(days=365),
+            '2y': timedelta(days=730), '5y': timedelta(days=1825)
+        }
+        start_date = end_date - period_map[args.period]
 
     print(f"Analyzing events from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
-    print(f"Weekdays are set to: {args.weekdays}")
-    print(f"Focus session is: >= {args.focus_minutes} mins AND in categories {args.focus_categories}")
 
     ics_file_path = find_ics_file(INPUT_ICS_DIR)
 
