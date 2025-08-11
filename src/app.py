@@ -6,6 +6,7 @@ import sys
 from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
+import pytz
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -26,7 +27,7 @@ ALL_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 
 
 
 # --- Helper Functions ---
-def run_parser_script(cat_delimiter, subcat_delimiter, weekdays, focus_categories, focus_minutes, period=None,
+def run_parser_script(cat_delimiter, subcat_delimiter, weekdays, focus_categories, focus_minutes, timezone, period=None,
                       start_date=None, end_date=None):
     """Constructs and runs the runner.py script as a subprocess."""
     python_executable = sys.executable
@@ -36,7 +37,8 @@ def run_parser_script(cat_delimiter, subcat_delimiter, weekdays, focus_categorie
         '--subcat_delimiter', subcat_delimiter,
         '--weekdays', *weekdays,
         '--focus_categories', *focus_categories,
-        '--focus_minutes', str(focus_minutes)
+        '--focus_minutes', str(focus_minutes),
+        '--timezone', timezone  # Pass the timezone to the backend script
     ]
     if period:
         command.extend(['--period', period])
@@ -64,7 +66,7 @@ with st.sidebar:
     st.title("Settings")
     uploaded_file = st.file_uploader("Upload Calendar", type=['ics'])
 
-    with st.expander("Parser & Feature Settings", expanded=True , icon='⚙️'):
+    with st.expander("Parser & Feature Settings", expanded=True, icon='⚙️'):
         date_option = st.radio("Select Date Range", ('Preset Period', 'Custom Range'), horizontal=True,
                                label_visibility="collapsed")
 
@@ -84,10 +86,15 @@ with st.sidebar:
         weekdays = st.multiselect("Weekdays", ALL_DAYS, default=DEFAULT_WEEKDAYS)
         cat_delimiter = st.text_input("Category Delimiter", ":")
         subcat_delimiter = st.text_input("Sub-category Delimiter", "-")
+
+        # Add timezone input
+        user_timezone = st.text_input("Your Timezone", "Asia/Tehran",
+                                      help="Find yours from the 'TZ database name' column [here](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)")
+
         focus_categories_str = st.text_input("Focus Categories", "work, learning, learn, project")
         focus_minutes = st.number_input("Min. Focus Duration (minutes)", min_value=1, value=90)
 
-    show_untracked = st.toggle("Show untracked time", value=True,
+    show_untracked = st.toggle("Show untracked time", value=False,
                                help="Adds an 'untracked' category to fill the remaining hours of each day.")
 
     if st.button("Analyze My Time", type="primary", use_container_width=True):
@@ -103,22 +110,35 @@ with st.sidebar:
 
             success = False
             if date_option == 'Preset Period':
+                # This logic can be simplified as the backend now handles timezone-aware period calculations
+                # But for now, we keep it to maintain UI consistency
+                try:
+                    local_tz = pytz.timezone(user_timezone)
+                except pytz.UnknownTimeZoneError:
+                    st.error(f"Unknown timezone: {user_timezone}. Please use a valid TZ database name.")
+                    local_tz = pytz.utc
+
+                now_local = datetime.now(local_tz)
                 period_map = {
                     '1w': 7, '2w': 14, '1m': 30, '3m': 90,
                     '6m': 182, '1y': 365, '2y': 730, '5y': 1825
                 }
-                st.session_state.start_date = (datetime.now() - timedelta(days=period_map[period])).date()
-                st.session_state.end_date = datetime.now().date()
+                st.session_state.start_date = (now_local - timedelta(days=period_map[period])).date()
+                st.session_state.end_date = now_local.date()
+
+                # Pass the user_timezone to the runner script
                 success = run_parser_script(cat_delimiter, subcat_delimiter, weekdays, focus_categories, focus_minutes,
-                                            period=period)
+                                            user_timezone, period=period)
             else:
                 if start_date_input > end_date_input:
                     st.error("Error: Start date cannot be after end date.")
                 else:
                     st.session_state.start_date = start_date_input
                     st.session_state.end_date = end_date_input
+
+                    # Pass the user_timezone to the runner script
                     success = run_parser_script(cat_delimiter, subcat_delimiter, weekdays, focus_categories,
-                                                focus_minutes,
+                                                focus_minutes, user_timezone,
                                                 start_date=start_date_input.strftime('%Y-%m-%d'),
                                                 end_date=end_date_input.strftime('%Y-%m-%d'))
             if success:
@@ -146,7 +166,8 @@ if os.path.exists(OUTPUT_CSV_PATH):
 
     # Handle empty dataframe before processing
     if not df.empty:
-        df['date'] = pd.to_datetime(df['date']).dt.date
+
+        df['date'] = pd.to_datetime(df['start_datetime']).dt.date
         df['subcategory_1'] = df['subcategory_1'].fillna('no subcategory')
         df['hours'] = df['duration_minutes'] / 60
     else:
@@ -166,14 +187,14 @@ if os.path.exists(OUTPUT_CSV_PATH):
         untracked_data = []
 
         for day in all_days_in_range:
-            day = day.date()
-            tracked_hours = tracked_hours_per_day.get(day, 0)
+            day_date_obj = day.date()
+            tracked_hours = tracked_hours_per_day.get(day_date_obj, 0)
             untracked_hours = 24 - tracked_hours
             if untracked_hours > 0.01:
                 untracked_data.append({
-                    'date': day,
-                    'day_of_week': day.strftime('%A'),
-                    'day_type': 'Weekday' if day.strftime('%A') in weekdays else 'Weekend',
+                    'date': day_date_obj,
+                    'day_of_week': day_date_obj.strftime('%A'),
+                    'day_type': 'Weekday' if day_date_obj.strftime('%A') in weekdays else 'Weekend',
                     'hours': untracked_hours,
                     'category': 'untracked',
                     'subcategory_1': 'untracked',
@@ -210,7 +231,6 @@ if os.path.exists(OUTPUT_CSV_PATH):
 
         st.markdown("---")
 
-
         # Display charts only if there is data to show
         if not df.empty:
             col1, col2 = st.columns(2)
@@ -227,7 +247,8 @@ if os.path.exists(OUTPUT_CSV_PATH):
                 st.subheader("Weekday vs Weekend Breakdown")
                 day_type_time = df.groupby(['day_type', 'category'])['hours'].sum().reset_index()
                 fig = px.bar(day_type_time, x='day_type', y='hours', color='category',
-                             labels={'hours': 'Total Hours', 'day_type': 'Day Type', 'category': 'Category'},height=700)
+                             labels={'hours': 'Total Hours', 'day_type': 'Day Type', 'category': 'Category'},
+                             height=700)
                 fig.update_layout(margin=dict(l=20, r=20, t=40, b=20))
                 st.plotly_chart(fig, use_container_width=True)
 
@@ -243,7 +264,7 @@ if os.path.exists(OUTPUT_CSV_PATH):
                 num_days = (st.session_state.end_date - st.session_state.start_date).days + 1
                 avg_daily_time = df.groupby('category')['hours'].sum() / num_days
                 fig = px.pie(avg_daily_time, values=avg_daily_time.values, names=avg_daily_time.index,
-                             title="Average Hours per Day", hole=0.3 , height=500)
+                             title="Average Hours per Day", hole=0.3, height=500)
                 fig.update_traces(textinfo='percent+label', hoverinfo='label+value')
                 fig.update_layout(margin=dict(l=20, r=20, t=40, b=20))
                 st.plotly_chart(fig, use_container_width=True)
