@@ -101,13 +101,13 @@ def expand_instances(cal: Calendar, start_utc: datetime, end_utc: datetime) -> l
 
 # --- blocks ----------------------------------------------------------------------------------
 
-def parse_title(title: str) -> tuple[str, str]:
+def parse_title(title: str, cat_delimiter: str = ":") -> tuple[str, str]:
     """Temporary minimal title parse (Stage 2 replaces it): ``CATEGORY: rest`` -> (CATEGORY, rest).
 
-    No colon: the whole title is the category and the subcategory is empty (same as the old behaviour).
+    No delimiter: the whole title is the category and the subcategory is empty (same as the old behaviour).
     """
-    if ":" in title:
-        category, rest = title.split(":", 1)
+    if cat_delimiter and cat_delimiter in title:
+        category, rest = title.split(cat_delimiter, 1)
         return category.strip().upper(), rest.strip()
     return title.strip().upper(), ""
 
@@ -124,7 +124,7 @@ def _empty_blocks() -> pd.DataFrame:
 
 
 def build_blocks(instances: list[Instance], tz: ZoneInfo, focus_categories=(), focus_minutes: int = 90,
-                 ) -> tuple[pd.DataFrame, IngestReport]:
+                 cat_delimiter: str = ":") -> tuple[pd.DataFrame, IngestReport]:
     """One row per valid event instance, plus a report of skipped events and overlaps.
 
     Focus is decided here, on the whole block, before any splitting at midnight.
@@ -150,7 +150,7 @@ def build_blocks(instances: list[Instance], tz: ZoneInfo, focus_categories=(), f
             if end_utc <= start_utc:
                 skip("non_positive_duration")
                 continue
-            category, subcategory = parse_title(inst.title)
+            category, subcategory = parse_title(inst.title, cat_delimiter)
             minutes = (end_utc - start_utc).total_seconds() / 60
             rows.append({
                 "uid": inst.uid, "title": inst.title, "description": inst.description,
@@ -231,11 +231,11 @@ def split_segments(blocks: pd.DataFrame, tz: ZoneInfo, start_utc: datetime, end_
 # --- convenience -----------------------------------------------------------------------------
 
 def analyze(source: bytes | str | Path, first_day: date, last_day: date, tz_name: str,
-            focus_categories=(), focus_minutes: int = 90, weekdays=DEFAULT_WEEKDAYS,
+            focus_categories=(), focus_minutes: int = 90, weekdays=DEFAULT_WEEKDAYS, cat_delimiter: str = ":",
             ) -> tuple[pd.DataFrame, pd.DataFrame, IngestReport]:
     """Whole pipeline for the local days first_day..last_day (inclusive). Returns (blocks, segments, report)."""
     tz = get_tz(tz_name)
     start_utc, end_utc = local_day_bounds(first_day, last_day, tz)
     instances = expand_instances(load_calendar(source), start_utc, end_utc)
-    blocks, report = build_blocks(instances, tz, focus_categories, focus_minutes)
+    blocks, report = build_blocks(instances, tz, focus_categories, focus_minutes, cat_delimiter)
     return blocks, split_segments(blocks, tz, start_utc, end_utc, weekdays), report
