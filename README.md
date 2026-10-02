@@ -59,7 +59,7 @@ Study: Math - Linear Algebra
 
 ### Prerequisites
 
-* Python 3.8+
+* Python 3.10+
 * A Google Calendar export file (`.ics`)
 
 ### 1. Clone the repository
@@ -121,17 +121,37 @@ streamlit run src/app.py
 
 ---
 
+## Privacy
+
+Your calendar is personal data. `data/`, `*.ics` files (except the synthetic test fixture in
+`tests/fixtures/`), generated CSVs and secrets are listed in `.gitignore` and must never be committed.
+Everything runs locally; nothing is uploaded anywhere.
+
+## Development
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Tests use only the synthetic calendar in `tests/fixtures/` (see `tests/fixtures/README.md`).
+
 ## Folder Structure
 
 ```
 .
-├── data/
-│   ├── ics/
-│   └── csv /             
+├── data/                  # personal data, gitignored
+│   ├── ics/               # input calendar
+│   └── output/            # generated calendar.csv
 ├── src/
 │   ├── app.py             # frontend
 │   └── runner.py          # processing
+├── tests/
+│   ├── fixtures/          # synthetic calendar + expected results
+│   └── test_*.py
+├── pyproject.toml         # pytest settings
 ├── requirements.txt
+├── requirements-dev.txt
 └── README.md
 ```
 
