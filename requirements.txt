@@ -1,5 +1,6 @@
-streamlit
-pandas
-plotly
-icalendar
-pytz
+streamlit==1.47.1
+pandas==2.3.1
+plotly==6.2.0
+icalendar==6.3.1
+pytz==2025.2
+recurring-ical-events==3.8.2
