@@ -139,3 +139,29 @@ def test_config_yaml_wins_over_the_example(tmp_path):
     cfg = config.load_config(root=tmp_path)
 
     assert cfg.timezone == "UTC" and cfg.source.endswith("config.yaml")
+
+
+# --- turning a config back into settings and saving it (used by the API) ---------------------
+
+def test_config_round_trips_through_plain_settings():
+    cfg = config.load_config(EXAMPLE)
+
+    settings = config.config_to_dict(cfg)
+
+    assert settings["days_off"] == ["Friday"] and settings["categories"]["LEARN"] == {"focus": True}
+    assert config.config_from_dict(settings, source=cfg.source) == cfg
+
+
+def test_days_off_are_listed_in_week_order():
+    cfg = config.config_from_dict(with_changes(days_off=["Sunday", "Friday", "Monday"]))
+
+    assert config.config_to_dict(cfg)["days_off"] == ["Monday", "Friday", "Sunday"]
+
+
+def test_save_config_writes_a_file_that_loads_back(tmp_path):
+    cfg = config.config_from_dict(with_changes(week_start="Monday", days_off=["Saturday", "Sunday"]))
+
+    path = config.save_config(cfg, tmp_path / "config.yaml")
+
+    assert path.read_text().startswith("# Time Analyzer settings")
+    assert config.config_to_dict(config.load_config(path)) == config.config_to_dict(cfg)

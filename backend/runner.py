@@ -7,20 +7,19 @@ import argparse
 import os
 import sys
 from dataclasses import replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 import pandas as pd
 
 import config as config_module
 import ingest
+import periods
 
 # --- Path Configuration (Robust Method) ---
-SRC_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_DIR = os.path.dirname(SRC_DIR)
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(BACKEND_DIR)
 INPUT_ICS_DIR = os.path.join(BASE_DIR, 'data', 'ics')
 OUTPUT_CSV_PATH = os.path.join(BASE_DIR, 'data', 'output', 'calendar.csv')
-
-PERIOD_DAYS = {'1w': 7, '2w': 14, '1m': 30, '3m': 90, '6m': 182, '1y': 365, '2y': 730, '5y': 1825}
 
 CSV_COLUMNS = [
     'date', 'day_of_week', 'day_type', 'start_time', 'end_time', 'duration_minutes',
@@ -129,8 +128,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Process an .ics calendar file into a CSV with engineered features for analysis.")
     parser.add_argument('--ics_path', type=str, default=None, help="Direct path to the .ics file to process.")
-    parser.add_argument('--period', type=str, default='1m', choices=list(PERIOD_DAYS),
-                        help="Set the analysis period (e.g., '1m' for one month).")
+    parser.add_argument('--period', type=str, default='1m', choices=[p['id'] for p in periods.PRESETS],
+                        help="Analysis period, e.g. '1m' (last 30 days) or 'this_week'.")
     parser.add_argument('--config', type=str, default=None,
                         help="Settings file. Default: config.yaml, or config.example.yaml if there is none.")
     parser.add_argument('--out', type=str, default=None, help=f"CSV to write. Default: {OUTPUT_CSV_PATH}")
@@ -157,15 +156,12 @@ def main(argv=None):
         cfg = config_with_overrides(args)
         tz = cfg.tz
         print(f"Using config: {cfg.source}")
-        if args.start_date and args.end_date:
-            try:
-                first_day = datetime.strptime(args.start_date, '%Y-%m-%d').date()
-                last_day = datetime.strptime(args.end_date, '%Y-%m-%d').date()
-            except ValueError:
-                raise ValueError("Invalid date format. Please use YYYY-MM-DD.")
+        today = datetime.now(tz).date()
+        if args.start_date or args.end_date:
+            first_day, last_day = periods.resolve_period(start=args.start_date, end=args.end_date, today=today,
+                                                         week_start=cfg.week_start)
         else:
-            last_day = datetime.now(tz).date()
-            first_day = last_day - timedelta(days=PERIOD_DAYS[args.period])
+            first_day, last_day = periods.resolve_period(args.period, today=today, week_start=cfg.week_start)
 
         print(f"Analyzing events from {first_day} to {last_day} in timezone {cfg.timezone}")
 

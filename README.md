@@ -132,7 +132,30 @@ streamlit run src/app.py
    * Use the sidebar to configure parsing options.
    * Click **Analyze My Time** to generate insights.
 
-   
+The Streamlit app is being replaced by a React frontend over a local API (in progress).
+
+### Backend API
+
+```bash
+uvicorn api.main:app --app-dir backend --host 127.0.0.1 --port 8000
+```
+
+Interactive docs at <http://127.0.0.1:8000/api/docs>. Send the `.ics` file as the request body:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/analyze?period=this_week" \
+     -H "Content-Type: text/calendar" --data-binary @my_calendar.ics
+```
+
+Periods: `1w 2w 1m 3m 6m 1y 2y 5y` (last N days), `this_week last_week this_month last_month this_year`
+(weeks follow your `week_start`), or `start=YYYY-MM-DD&end=YYYY-MM-DD`. The file stays in memory and is never
+saved. `GET`/`PUT /api/config` read and save your settings (`PUT` rewrites `config.yaml`).
+
+### Command line
+
+```bash
+python backend/runner.py --ics_path my_calendar.ics --period this_month --out my_calendar.csv
+```
 
 ---
 
@@ -140,7 +163,8 @@ streamlit run src/app.py
 
 Your calendar is personal data. `data/`, `*.ics` files (except the synthetic test fixture in
 `tests/fixtures/`), generated CSVs and secrets are listed in `.gitignore` and must never be committed.
-Everything runs locally; nothing is uploaded anywhere.
+Everything runs locally; nothing is uploaded anywhere. The API only listens on `127.0.0.1` and only accepts
+requests from the local frontend (`TIME_ANALYZER_ORIGINS` changes the allowed origins).
 
 ## Development
 
@@ -158,12 +182,15 @@ Tests use only the synthetic calendar in `tests/fixtures/` (see `tests/fixtures/
 ├── data/                  # personal data, gitignored
 │   ├── ics/               # input calendar
 │   └── output/            # generated calendar.csv
-├── src/
-│   ├── app.py             # frontend (Streamlit, to be replaced)
-│   ├── config.py          # loads and validates config.yaml
+├── backend/
+│   ├── api/               # FastAPI app (routes, cache, JSON conversion)
+│   ├── config.py          # loads, validates and saves config.yaml
 │   ├── ingest.py          # calendar parsing core
+│   ├── periods.py         # date-range presets
 │   ├── syntax.py          # event title grammar
 │   └── runner.py          # command-line tool
+├── src/
+│   └── app.py             # old Streamlit frontend, to be replaced
 ├── tests/
 │   ├── fixtures/          # synthetic calendar + expected results
 │   └── test_*.py

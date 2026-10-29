@@ -1,6 +1,6 @@
 """Load and validate the settings file (config.yaml, or config.example.yaml as a fallback).
 
-Pure apart from reading the file: no Streamlit, no web framework. Spec: c-c-k/docs/stages/STAGE_2_syntax_and_config.md.
+Pure apart from reading and writing the file: no Streamlit, no web framework. Spec: c-c-k/docs/stages/STAGE_2_syntax_and_config.md.
 Every problem in a config is collected and reported at once, so one run shows everything to fix.
 """
 from __future__ import annotations
@@ -199,3 +199,32 @@ def load_config(path: str | Path | None = None, root: Path = ROOT_DIR) -> Config
         line = f" (line {mark.line + 1})" if mark else ""
         raise ConfigError(f"{path} is not valid YAML{line}: {getattr(exc, 'problem', exc)}") from exc
     return config_from_dict(data, source=str(path))
+
+
+# --- plain settings and saving -----------------------------------------------------------------
+
+def config_to_dict(cfg: Config) -> dict:
+    """The config as plain settings, in the same shape as config.yaml (inverse of ``config_from_dict``)."""
+    return {
+        "timezone": cfg.timezone,
+        "week_start": cfg.week_start,
+        "days_off": [day for day in WEEKDAYS if day in cfg.days_off],
+        "categories": {name: {"focus": cat.focus} for name, cat in cfg.categories.items()},
+        "legacy_categories": {name: {"map_to": rule.map_to, "add_tags": list(rule.add_tags)}
+                              for name, rule in cfg.legacy_categories.items()},
+        "focus": {"min_minutes": cfg.focus_min_minutes},
+        "syntax": {"subcategory_separator": cfg.subcategory_separator},
+        "tags": {"known": sorted(cfg.known_tags)},
+    }
+
+
+SAVED_HEADER = ("# Time Analyzer settings, saved by the app. Hand-written comments are not kept;\n"
+                "# see config.example.yaml for what each setting means.\n")
+
+
+def save_config(cfg: Config, path: str | Path) -> Path:
+    """Write the config as YAML (a plain rewrite) and return the path."""
+    path = Path(path)
+    text = yaml.safe_dump(config_to_dict(cfg), sort_keys=False, allow_unicode=True, default_flow_style=None)
+    path.write_text(SAVED_HEADER + text, encoding="utf-8")
+    return path

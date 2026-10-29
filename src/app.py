@@ -21,7 +21,7 @@ SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SRC_DIR)
 INPUT_ICS_DIR = os.path.join(BASE_DIR, 'data', 'ics')
 OUTPUT_CSV_PATH = os.path.join(BASE_DIR, 'data', 'output', 'calendar.csv')
-RUNNER_SCRIPT_PATH = os.path.join(SRC_DIR, 'runner.py')
+RUNNER_SCRIPT_PATH = os.path.join(BASE_DIR, 'backend', 'runner.py')  # core moved to backend/ (Stage 3)
 DEFAULT_WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 ALL_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 

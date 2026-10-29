@@ -1,4 +1,4 @@
-"""Acceptance tests for src/ingest.py (specs: c-c-k/docs/stages/STAGE_1_parser_correctness.md and STAGE_2)."""
+"""Acceptance tests for backend/ingest.py (specs: c-c-k/docs/stages/STAGE_1_parser_correctness.md and STAGE_2)."""
 from datetime import date
 from pathlib import Path
 
