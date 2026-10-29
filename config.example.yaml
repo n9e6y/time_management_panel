@@ -1,0 +1,28 @@
+# Time Analyzer settings. Copy this file to config.yaml (gitignored) and edit your copy.
+# Title grammar: c-c-k/docs/SYNTAX_SPEC.md (CATEGORY: task #tag +project [score]).
+
+timezone: Asia/Tehran            # IANA name; set to where you live
+week_start: Saturday             # any weekday; weekly totals and targets follow it
+days_off: [Friday]               # your weekend: any set of weekdays, may be empty
+
+categories:                      # order = display order; focus = counts toward focus sessions
+  SLEEP: {}
+  JOB:      { focus: true }
+  CLASS:    { focus: true }
+  LEARN:    { focus: true }
+  RESEARCH: { focus: true }
+  SOCIAL: {}
+  ME: {}
+
+legacy_categories:               # old categories: map_to null keeps them as their own group
+  URGANT: { map_to: null, add_tags: [unplanned] }
+  URGENT: { map_to: null, add_tags: [unplanned] }
+
+focus:
+  min_minutes: 90                # a focus block must last at least this long
+
+syntax:
+  subcategory_separator: " - "   # "ME: chill - youtube" splits the block's time evenly, back to back
+
+tags:
+  known: [deep, shallow, unplanned]

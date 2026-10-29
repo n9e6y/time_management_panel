@@ -1,14 +1,14 @@
-from datetime import datetime
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
 import pytest
-import pytz
 
-FIXTURE_ICS = Path(__file__).parent / "fixtures" / "google_export_sample.ics"
-FIXTURE_TZ = "Asia/Tehran"
-FOCUS_CATEGORIES = ["JOB", "CLASS", "LEARN", "RESEARCH"]
-WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+import config
+
+ROOT = Path(__file__).resolve().parent.parent
+FIXTURE_ICS = ROOT / "tests" / "fixtures" / "google_export_sample.ics"
+FIXTURE_CONFIG = ROOT / "config.example.yaml"  # timezone Asia/Tehran, focus JOB/CLASS/LEARN/RESEARCH, day off Friday
 
 
 @pytest.fixture
@@ -18,26 +18,18 @@ def fixture_ics() -> Path:
 
 @pytest.fixture
 def run_pipeline(tmp_path):
-    """Run ``runner.process_ics_to_csv`` on the synthetic fixture and return the CSV as a DataFrame.
+    """Run ``runner.write_calendar_csv`` on the synthetic fixture and return the CSV as a DataFrame.
 
     Always writes to ``tmp_path``, never to ``data/output``.
     """
 
-    def _run(ics_path: Path = FIXTURE_ICS, timezone: str = FIXTURE_TZ,
-             first_day: str = "2025-09-01", last_day: str = "2025-09-08") -> pd.DataFrame:
+    def _run(ics_path: Path = FIXTURE_ICS, first_day: date = date(2025, 9, 1),
+             last_day: date = date(2025, 9, 8)) -> pd.DataFrame:
         import runner
 
-        tz = pytz.timezone(timezone)
-        start = tz.localize(datetime.strptime(first_day, "%Y-%m-%d")).astimezone(pytz.utc)
-        end = tz.localize(datetime.combine(datetime.strptime(last_day, "%Y-%m-%d").date(),
-                                           datetime.max.time())).astimezone(pytz.utc)
         csv_path = tmp_path / "calendar.csv"
-        runner.process_ics_to_csv(
-            ics_path=str(ics_path), csv_path=str(csv_path),
-            cat_delimiter=":", subcat_delimiter="-",
-            start_date=start, end_date=end, weekdays=WEEKDAYS,
-            focus_categories=FOCUS_CATEGORIES, focus_minutes=90, timezone_str=timezone,
-        )
+        runner.write_calendar_csv(str(ics_path), str(csv_path), first_day, last_day,
+                                  config.load_config(FIXTURE_CONFIG))
         return pd.read_csv(csv_path)
 
     return _run

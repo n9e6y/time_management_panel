@@ -216,6 +216,9 @@ calendar.csv
 
 # --- Secrets ---
 .env
+
+# --- Personal settings (commit only config.example.yaml) ---
+/config.yaml
 .streamlit/secrets.toml
 
 # --- Personal Claude Code settings ---

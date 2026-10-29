@@ -1,14 +1,17 @@
-"""Stage 1 acceptance tests for src/ingest.py (spec: c-c-k/docs/stages/STAGE_1_parser_correctness.md)."""
+"""Acceptance tests for src/ingest.py (specs: c-c-k/docs/stages/STAGE_1_parser_correctness.md and STAGE_2)."""
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
+import config
 import ingest
 
-FIXTURE_ICS = Path(__file__).parent / "fixtures" / "google_export_sample.ics"
-FOCUS = ["JOB", "CLASS", "LEARN", "RESEARCH"]
+ROOT = Path(__file__).resolve().parent.parent
+FIXTURE_ICS = ROOT / "tests" / "fixtures" / "google_export_sample.ics"
+EXAMPLE_CONFIG = yaml.safe_load((ROOT / "config.example.yaml").read_text())
 FIRST_DAY, LAST_DAY = date(2025, 9, 1), date(2025, 9, 8)
 
 
@@ -18,8 +21,14 @@ def make_ics(*events: str) -> str:
     return f"BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//test//EN\n{body}\nEND:VCALENDAR\n"
 
 
-def run(source, tz_name="Asia/Tehran", first=FIRST_DAY, last=LAST_DAY, focus=FOCUS, focus_minutes=90):
-    return ingest.analyze(source, first, last, tz_name, focus_categories=focus, focus_minutes=focus_minutes)
+def make_config(tz_name="Asia/Tehran", focus_minutes=90, **changes) -> config.Config:
+    """The committed example config, with the analysis timezone and any other settings changed."""
+    return config.config_from_dict({**EXAMPLE_CONFIG, "timezone": tz_name, "focus": {"min_minutes": focus_minutes},
+                                    **changes})
+
+
+def run(source, tz_name="Asia/Tehran", first=FIRST_DAY, last=LAST_DAY, **changes):
+    return ingest.analyze(source, first, last, make_config(tz_name, **changes))
 
 
 @pytest.fixture(scope="module")
@@ -28,9 +37,13 @@ def result():
 
 
 def block(blocks, text):
-    rows = blocks[blocks["title"].str.contains(text, case=False)]
+    rows = blocks[blocks["title"].str.contains(text, case=False, regex=False)]
     assert len(rows) == 1, f"expected one block matching {text!r}, got {len(rows)}"
     return rows.iloc[0]
+
+
+def times(segments):
+    return [(s.strftime("%H:%M"), e.strftime("%H:%M")) for s, e in zip(segments["start_local"], segments["end_local"])]
 
 
 # --- fixture acceptance criteria -------------------------------------------------------------
@@ -59,6 +72,7 @@ def test_recurring_family_dinner_on_1_sep(result):
     dinner = block(blocks, "family dinner")
     assert dinner["start_local"].strftime("%Y-%m-%d %H:%M") == "2025-09-01 19:00"
     assert dinner["duration_min"] == 120
+    assert dinner["score"] == 5
 
 
 def test_duration_event_has_60_minutes(result):
@@ -77,16 +91,19 @@ def test_learn_is_one_focus_block_with_description(result):
     assert learn["duration_min"] == 120
     assert bool(learn["is_focus"]) is True
     assert learn["description"] == "got stuck on limits, review chapter 3"
+    assert learn["comment"] == "got stuck on limits, review chapter 3"
     assert learn["start_local"].strftime("%H:%M") == "09:00"
     assert len(segments[segments["block_id"] == learn["block_id"]]) == 1
 
 
-def test_no_time_split_on_hyphens(result):
-    blocks, _, _ = result
+def test_learn_title_is_parsed_with_the_full_grammar(result):
+    blocks, segments, _ = result
 
     learn = block(blocks, "calculus")
-    assert learn["category"] == "LEARN"
-    assert learn["subcategory"] == "calculus ch.4 #deep +exam-prep [4]"  # minimal parse; Stage 2 replaces
+    assert (learn["category"], learn["task"], learn["subcategories"]) == ("LEARN", "calculus ch.4", ["calculus ch.4"])
+    assert (learn["tags"], learn["projects"], learn["score"], learn["issues"]) == (["deep"], ["exam-prep"], 4, [])
+    seg = segments[segments["block_id"] == learn["block_id"]].iloc[0]
+    assert (seg["subcategory"], seg["tags"], seg["score"]) == ("calculus ch.4", ["deep"], 4)
 
 
 def test_utc_class_block_is_split_at_local_midnight(result):
@@ -130,20 +147,169 @@ def test_invariants(result):
 def test_columns_follow_the_spec(result):
     blocks, segments, _ = result
 
-    for col in ["uid", "title", "description", "start_utc", "end_utc", "start_local", "end_local",
-                "duration_min", "category", "subcategory", "is_focus"]:
+    for col in ["uid", "title", "description", "comment", "start_utc", "end_utc", "start_local", "end_local",
+                "duration_min", "category", "task", "subcategories", "tags", "projects", "score", "issues",
+                "is_focus"]:
         assert col in blocks.columns
-    for col in ["block_id", "date", "day_of_week", "day_type", "start_local", "end_local", "duration_min"]:
+    for col in ["block_id", "part_index", "category", "subcategory", "tags", "projects", "score", "comment",
+                "is_focus", "date", "day_of_week", "is_day_off", "day_type", "week_start", "start_local",
+                "end_local", "duration_min"]:
         assert col in segments.columns
     assert str(blocks["start_utc"].dt.tz) == "UTC"
 
 
-def test_day_type_uses_weekdays(result):
+def test_fixture_titles_are_clean_and_all_day_events_are_not_in_the_validation_report(result):
+    _, _, report = result
+
+    assert report.title_issues == {}  # "Birthday reminder" has no colon, but it is all-day, so not a block
+
+
+# --- days off and week start (user settings) --------------------------------------------------
+
+def test_day_type_follows_days_off(result):
     _, segments, _ = result
 
-    by_date = segments.drop_duplicates("date").set_index("date")["day_type"]
-    assert by_date[date(2025, 9, 1)] == "Weekday"  # Monday
-    assert by_date[date(2025, 9, 6)] == "Weekend"  # Saturday
+    by_date = segments.drop_duplicates("date").set_index("date")
+    assert by_date.loc[date(2025, 9, 5), "day_type"] == "Day off"  # Friday, the example config's day off
+    assert by_date.loc[date(2025, 9, 6), "day_type"] == "Workday"  # Saturday
+    assert bool(by_date.loc[date(2025, 9, 5), "is_day_off"]) is True
+
+
+def test_changing_days_off_changes_the_flag():
+    _, segments, _ = run(FIXTURE_ICS, days_off=["Saturday", "Sunday"])
+
+    by_date = segments.drop_duplicates("date").set_index("date")["is_day_off"]
+    assert not by_date[date(2025, 9, 5)] and by_date[date(2025, 9, 6)] and by_date[date(2025, 9, 7)]
+
+
+def test_week_start_buckets_weeks_from_the_configured_day():
+    # 5 Sep 2025 is a Friday, 6 Sep a Saturday.
+    _, saturday_weeks, _ = run(FIXTURE_ICS, week_start="Saturday")
+    _, monday_weeks, _ = run(FIXTURE_ICS, week_start="Monday")
+
+    sat = saturday_weeks.drop_duplicates("date").set_index("date")["week_start"]
+    mon = monday_weeks.drop_duplicates("date").set_index("date")["week_start"]
+    assert (sat[date(2025, 9, 5)], sat[date(2025, 9, 6)]) == (date(2025, 8, 30), date(2025, 9, 6))
+    assert (mon[date(2025, 9, 5)], mon[date(2025, 9, 6)]) == (date(2025, 9, 1), date(2025, 9, 1))
+
+
+def test_week_start_of():
+    assert ingest.week_start_of(date(2025, 9, 6), "Saturday") == date(2025, 9, 6)
+    assert ingest.week_start_of(date(2025, 9, 5), "Saturday") == date(2025, 8, 30)
+    assert ingest.week_start_of(date(2025, 9, 7), "Sunday") == date(2025, 9, 7)
+
+
+# --- even time split on " - " (back-to-back, title order) --------------------------------------
+
+def test_two_parts_split_back_to_back_and_keep_the_block_details():
+    ics = make_ics("UID:a\nDTSTART:20250902T090000Z\nDTEND:20250902T110000Z\n"
+                   "SUMMARY:ME: chill - youtube #unplanned [3]\nDESCRIPTION:tired")
+
+    blocks, segments, _ = run(ics, "UTC")
+
+    assert len(blocks) == 1 and blocks.iloc[0]["subcategories"] == ["chill", "youtube"]
+    segs = segments.sort_values("start_local")
+    assert list(segs["subcategory"]) == ["chill", "youtube"]
+    assert list(segs["part_index"]) == [0, 1]
+    assert times(segs) == [("09:00", "10:00"), ("10:00", "11:00")]
+    assert list(segs["duration_min"]) == [60, 60]
+    assert list(segs["score"]) == [3, 3]
+    assert list(segs["tags"]) == [["unplanned"], ["unplanned"]]
+    assert list(segs["comment"]) == ["tired", "tired"]
+
+
+def test_split_parts_then_split_at_local_midnight():
+    # 22:30-01:30 local (Tehran), three parts of 60 min: 22:30-23:30, 23:30-00:30 (crosses midnight), 00:30-01:30
+    ics = make_ics("UID:a\nDTSTART:20250902T190000Z\nDTEND:20250902T220000Z\nSUMMARY:LEARN: a - b - c")
+
+    blocks, segments, _ = run(ics)
+
+    segs = segments.sort_values("start_local")
+    assert list(zip(segs["subcategory"], segs["date"], segs["duration_min"])) == [
+        ("a", date(2025, 9, 2), 60), ("b", date(2025, 9, 2), 30), ("b", date(2025, 9, 3), 30),
+        ("c", date(2025, 9, 3), 60)]
+    assert segments["duration_min"].sum() == blocks["duration_min"].sum() == 180
+
+
+def test_uneven_split_preserves_the_total_exactly():
+    ics = make_ics("UID:a\nDTSTART:20250902T090000Z\nDTEND:20250902T100000Z\nSUMMARY:ME: a - b - c")
+
+    blocks, segments, _ = run(ics, "UTC")
+
+    assert segments["duration_min"].sum() == pytest.approx(60)
+    segs = segments.sort_values("start_local")
+    assert segs.iloc[-1]["end_local"] == blocks.iloc[0]["end_local"]
+    assert (segs["start_local"].iloc[1:].values == segs["end_local"].iloc[:-1].values).all()  # no gaps, no overlap
+
+
+def test_focus_is_decided_on_the_whole_block_before_splitting():
+    ics = make_ics("UID:a\nDTSTART:20250902T090000Z\nDTEND:20250902T110000Z\nSUMMARY:LEARN: theory - exercises")
+
+    _, segments, _ = run(ics, "UTC")
+
+    assert segments["is_focus"].all()  # each part is 60 min, below 90, but the block is 120 min
+
+
+def test_hyphens_without_spaces_never_split():
+    ics = make_ics("UID:a\nDTSTART:20250902T090000Z\nDTEND:20250902T100000Z\nSUMMARY:JOB: follow-up e-mail +q-3")
+
+    _, segments, _ = run(ics, "UTC")
+
+    assert list(segments["subcategory"]) == ["follow-up e-mail"]
+
+
+# --- titles with issues -----------------------------------------------------------------------
+
+def test_title_without_colon_is_uncategorized_and_reported():
+    ics = make_ics("UID:a\nDTSTART:20250902T100000Z\nDTEND:20250902T110000Z\nSUMMARY:Sleep")
+
+    blocks, segments, report = run(ics, "UTC")
+
+    row = blocks.iloc[0]
+    assert (row["category"], row["task"], row["issues"]) == ("UNCATEGORIZED", "Sleep", ["missing_category"])
+    assert segments["duration_min"].sum() == 60  # the time still counts
+    assert [item["title"] for item in report.title_issues["missing_category"]] == ["Sleep"]
+
+
+def test_validation_report_groups_blocks_by_issue_code():
+    ics = make_ics(
+        "UID:a\nDTSTART:20250902T090000Z\nDTEND:20250902T100000Z\nSUMMARY:GYM: legs [7]",
+        "UID:b\nDTSTART:20250902T100000Z\nDTEND:20250902T110000Z\nSUMMARY:#deep LEARN: x",
+        "UID:c\nDTSTART:20250902T110000Z\nDTEND:20250902T120000Z\nSUMMARY:ME: fine",
+    )
+
+    _, _, report = run(ics, "UTC")
+
+    titles = {code: [item["title"] for item in items] for code, items in report.title_issues.items()}
+    assert titles == {"unknown_category": ["GYM: legs [7]"], "invalid_score": ["GYM: legs [7]"],
+                      "tokens_before_category": ["#deep LEARN: x"]}
+    item = report.title_issues["tokens_before_category"][0]
+    assert set(item) == {"block_id", "title", "start_local", "issues"}
+
+
+def test_legacy_category_is_its_own_group_tagged_unplanned():
+    ics = make_ics("UID:a\nDTSTART:20250902T090000Z\nDTEND:20250902T100000Z\nSUMMARY:URGENT: fix laptop")
+
+    blocks, _, report = run(ics, "UTC")
+
+    assert (blocks.iloc[0]["category"], blocks.iloc[0]["tags"]) == ("URGENT", ["unplanned"])
+    assert list(report.title_issues) == ["legacy_category"]
+
+
+def test_html_description_becomes_a_clean_comment():
+    ics = make_ics("UID:a\nDTSTART:20250902T090000Z\nDTEND:20250902T100000Z\nSUMMARY:ME: a\n"
+                   "DESCRIPTION:a<br>b &amp; c")
+
+    blocks, _, _ = run(ics, "UTC")
+
+    assert blocks.iloc[0]["comment"] == "a\nb & c"
+
+
+def test_missing_scores_stay_missing_not_zero(result):
+    blocks, _, _ = result
+
+    assert pd.isna(block(blocks, "lunch")["score"])
+    assert blocks["score"].mean() == pytest.approx((5 + 4 + 3 + 2) / 4)  # only scored blocks count
 
 
 # --- edge cases on small synthetic calendars -------------------------------------------------
@@ -222,21 +388,14 @@ def test_focus_matching_is_case_insensitive_and_needs_minimum_duration():
     ics = make_ics(
         "UID:a\nDTSTART:20250902T100000Z\nDTEND:20250902T113000Z\nSUMMARY:learn: long enough",
         "UID:b\nDTSTART:20250902T120000Z\nDTEND:20250902T123000Z\nSUMMARY:LEARN: too short",
+        "UID:c\nDTSTART:20250902T130000Z\nDTEND:20250902T150000Z\nSUMMARY:ME: not a focus category",
     )
-
-    blocks, _, _ = run(ics, "UTC", focus=["learn"])
-
-    assert bool(block(blocks, "long enough")["is_focus"]) is True
-    assert bool(block(blocks, "too short")["is_focus"]) is False
-
-
-def test_title_without_colon_keeps_whole_title_as_category():
-    ics = make_ics("UID:a\nDTSTART:20250902T100000Z\nDTEND:20250902T110000Z\nSUMMARY:Sleep")
 
     blocks, _, _ = run(ics, "UTC")
 
-    row = blocks.iloc[0]
-    assert (row["category"], row["subcategory"]) == ("SLEEP", "")
+    assert bool(block(blocks, "long enough")["is_focus"]) is True
+    assert bool(block(blocks, "too short")["is_focus"]) is False
+    assert bool(block(blocks, "not a focus")["is_focus"]) is False
 
 
 def test_empty_calendar_returns_empty_frames_with_columns():
@@ -244,7 +403,7 @@ def test_empty_calendar_returns_empty_frames_with_columns():
 
     assert blocks.empty and segments.empty
     assert "duration_min" in blocks.columns and "block_id" in segments.columns
-    assert report.skipped == [] and report.overlaps == []
+    assert report.skipped == [] and report.overlaps == [] and report.title_issues == {}
 
 
 def test_event_outside_range_is_excluded_and_edges_are_clipped():

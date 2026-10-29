@@ -1,26 +1,40 @@
 """Turn an ICS calendar into correct time blocks and per-day segments.
 
-Pure functions only: no Streamlit, no file writing. Spec: c-c-k/docs/stages/STAGE_1_parser_correctness.md.
+Pure functions only: no web framework, no file writing. Specs: c-c-k/docs/stages/STAGE_1_parser_correctness.md
+and STAGE_2_syntax_and_config.md.
 
-Pipeline: load_calendar -> expand_instances -> build_blocks -> split_segments (or ``analyze`` for all of it).
+Pipeline: load_calendar -> expand_instances -> build_blocks -> split_parts -> split_segments
+(or ``analyze`` for all of it). Settings come from a ``config.Config``.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pandas as pd
 import recurring_ical_events
 from icalendar import Calendar
 
-DEFAULT_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
+import syntax
 
-BLOCK_COLUMNS = ["block_id", "uid", "title", "description", "start_utc", "end_utc", "start_local", "end_local",
-                 "duration_min", "category", "subcategory", "is_focus"]
-SEGMENT_COLUMNS = ["block_id", "uid", "title", "description", "category", "subcategory", "is_focus",
-                   "date", "day_of_week", "day_type", "start_local", "end_local", "duration_min"]
+if TYPE_CHECKING:
+    from config import Config
+
+WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+UNCATEGORIZED = "UNCATEGORIZED"  # a string, not None: pandas groupby silently drops None keys
+
+BLOCK_COLUMNS = ["block_id", "uid", "title", "description", "comment", "start_utc", "end_utc", "start_local",
+                 "end_local", "duration_min", "category", "task", "subcategories", "tags", "projects", "score",
+                 "issues", "is_focus"]
+# Block details copied onto each of its parts and segments.
+_BLOCK_DETAILS = ["block_id", "uid", "title", "category", "task", "tags", "projects", "score", "comment", "is_focus"]
+_PART_DETAILS = ["part_index", "subcategory", *_BLOCK_DETAILS]
+PART_COLUMNS = [*_PART_DETAILS, "start_utc", "end_utc"]
+SEGMENT_COLUMNS = [*_PART_DETAILS, "date", "day_of_week", "is_day_off", "day_type", "week_start",
+                   "start_local", "end_local", "duration_min"]
 
 
 @dataclass(frozen=True)
@@ -39,6 +53,7 @@ class IngestReport:
     """What was left out and what looks suspicious. Nothing is silently dropped."""
     skipped: list[dict] = field(default_factory=list)   # uid, title, start, reason
     overlaps: list[dict] = field(default_factory=list)  # block_a, block_b, minutes
+    title_issues: dict[str, list[dict]] = field(default_factory=dict)  # issue code -> blocks (validation report)
 
 
 # --- timezone helpers ------------------------------------------------------------------------
@@ -64,6 +79,11 @@ def day_length_hours(day: date, tz: ZoneInfo) -> float:
     """Real length of a local day in hours (23 or 25 on daylight-saving changes)."""
     start, end = local_day_bounds(day, day, tz)
     return (end - start).total_seconds() / 3600
+
+
+def week_start_of(day: date, week_start: str) -> date:
+    """First day of the week containing ``day``, for weeks starting on ``week_start`` (e.g. 'Saturday')."""
+    return day - timedelta(days=(day.weekday() - WEEKDAYS.index(week_start)) % 7)
 
 
 # --- loading and expansion -------------------------------------------------------------------
@@ -101,17 +121,6 @@ def expand_instances(cal: Calendar, start_utc: datetime, end_utc: datetime) -> l
 
 # --- blocks ----------------------------------------------------------------------------------
 
-def parse_title(title: str, cat_delimiter: str = ":") -> tuple[str, str]:
-    """Temporary minimal title parse (Stage 2 replaces it): ``CATEGORY: rest`` -> (CATEGORY, rest).
-
-    No delimiter: the whole title is the category and the subcategory is empty (same as the old behaviour).
-    """
-    if cat_delimiter and cat_delimiter in title:
-        category, rest = title.split(cat_delimiter, 1)
-        return category.strip().upper(), rest.strip()
-    return title.strip().upper(), ""
-
-
 def _to_utc(value: datetime, tz: ZoneInfo) -> datetime:
     """Aware values keep their instant; floating (naive) values are wall-clock time in ``tz``."""
     if value.tzinfo is None:
@@ -123,14 +132,15 @@ def _empty_blocks() -> pd.DataFrame:
     return pd.DataFrame({col: pd.Series(dtype="object") for col in BLOCK_COLUMNS})
 
 
-def build_blocks(instances: list[Instance], tz: ZoneInfo, focus_categories=(), focus_minutes: int = 90,
-                 cat_delimiter: str = ":") -> tuple[pd.DataFrame, IngestReport]:
-    """One row per valid event instance, plus a report of skipped events and overlaps.
+def build_blocks(instances: list[Instance], config: Config) -> tuple[pd.DataFrame, IngestReport]:
+    """One row per valid event instance with its parsed title, plus a report of skipped events, overlaps
+    and title issues.
 
-    Focus is decided here, on the whole block, before any splitting at midnight.
+    Focus is decided here, on the whole block, before splitting into parts or at midnight.
     """
+    tz = config.tz
     report = IngestReport()
-    focus = {c.strip().casefold() for c in focus_categories}
+    focus = {c.casefold() for c in config.focus_categories}
     rows = []
 
     for inst in instances:
@@ -150,13 +160,16 @@ def build_blocks(instances: list[Instance], tz: ZoneInfo, focus_categories=(), f
             if end_utc <= start_utc:
                 skip("non_positive_duration")
                 continue
-            category, subcategory = parse_title(inst.title, cat_delimiter)
+            parsed = syntax.parse_title(inst.title, config)
+            category = parsed.category or UNCATEGORIZED
             minutes = (end_utc - start_utc).total_seconds() / 60
             rows.append({
                 "uid": inst.uid, "title": inst.title, "description": inst.description,
+                "comment": syntax.clean_description(inst.description),
                 "start_utc": start_utc, "end_utc": end_utc, "duration_min": minutes,
-                "category": category, "subcategory": subcategory,
-                "is_focus": category.casefold() in focus and minutes >= focus_minutes,
+                "category": category, "task": parsed.task, "subcategories": parsed.subcategories,
+                "tags": parsed.tags, "projects": parsed.projects, "score": parsed.score, "issues": parsed.issues,
+                "is_focus": category.casefold() in focus and minutes >= config.focus_min_minutes,
             })
 
     if not rows:
@@ -167,10 +180,25 @@ def build_blocks(instances: list[Instance], tz: ZoneInfo, focus_categories=(), f
     blocks["end_utc"] = pd.to_datetime(blocks["end_utc"], utc=True)
     blocks["start_local"] = blocks["start_utc"].dt.tz_convert(tz)
     blocks["end_local"] = blocks["end_utc"].dt.tz_convert(tz)
+    blocks["score"] = blocks["score"].astype("Int64")  # missing stays <NA>, so averages skip it
     blocks.insert(0, "block_id", range(len(blocks)))
     blocks = blocks[BLOCK_COLUMNS]
     report.overlaps = find_overlaps(blocks)
+    report.title_issues = validation_report(blocks)
     return blocks, report
+
+
+def validation_report(blocks: pd.DataFrame) -> dict[str, list[dict]]:
+    """Blocks whose titles have issues, grouped by issue code, so they can be fixed in the calendar.
+
+    Only time blocks are checked: all-day events and other skipped events are never listed.
+    """
+    report: dict[str, list[dict]] = {}
+    for row in blocks.itertuples(index=False):
+        for code in row.issues:
+            report.setdefault(code, []).append({"block_id": row.block_id, "title": row.title,
+                                                "start_local": row.start_local, "issues": list(row.issues)})
+    return report
 
 
 def find_overlaps(blocks: pd.DataFrame) -> list[dict]:
@@ -188,33 +216,54 @@ def find_overlaps(blocks: pd.DataFrame) -> list[dict]:
     return overlaps
 
 
-# --- segments --------------------------------------------------------------------------------
+# --- parts and segments ----------------------------------------------------------------------
 
-def split_segments(blocks: pd.DataFrame, tz: ZoneInfo, start_utc: datetime, end_utc: datetime,
-                   weekdays=DEFAULT_WEEKDAYS) -> pd.DataFrame:
-    """Split blocks at local midnight and clip them to [start_utc, end_utc).
+def split_parts(blocks: pd.DataFrame) -> pd.DataFrame:
+    """One row per subcategory: the block's time cut into equal back-to-back slices, in title order.
 
-    Durations are measured on UTC instants, so days with 23 or 25 hours stay correct.
+    ``ME: chill - youtube`` at 09:00-11:00 gives chill 09:00-10:00 and youtube 10:00-11:00. The last slice ends
+    exactly at the block's end, so totals are preserved. A block with no subcategory is one part.
     """
-    weekdays = set(weekdays)
-    utc = timezone.utc
     rows = []
     for block in blocks.itertuples(index=False):
-        cursor = max(block.start_utc.to_pydatetime(), start_utc)
-        block_end = min(block.end_utc.to_pydatetime(), end_utc)
-        while cursor < block_end:
+        names = block.subcategories or [""]
+        start, end = block.start_utc.to_pydatetime(), block.end_utc.to_pydatetime()
+        step = (end - start) / len(names)
+        details = {col: getattr(block, col) for col in _BLOCK_DETAILS}
+        for i, name in enumerate(names):
+            part_end = end if i == len(names) - 1 else start + step * (i + 1)
+            rows.append({"part_index": i, "subcategory": name, **details,
+                         "start_utc": start + step * i, "end_utc": part_end})
+    if not rows:
+        return pd.DataFrame({col: pd.Series(dtype="object") for col in PART_COLUMNS})
+    return pd.DataFrame(rows)[PART_COLUMNS]
+
+
+def split_segments(parts: pd.DataFrame, config: Config, start_utc: datetime, end_utc: datetime) -> pd.DataFrame:
+    """Split parts at local midnight and clip them to [start_utc, end_utc).
+
+    Durations are measured on UTC instants, so days with 23 or 25 hours stay correct. Day labels follow the
+    user's ``days_off`` and ``week_start``.
+    """
+    tz = config.tz
+    rows = []
+    for part in parts.itertuples(index=False):
+        details = {col: getattr(part, col) for col in _PART_DETAILS}
+        cursor = max(_as_datetime(part.start_utc), start_utc)
+        part_end = min(_as_datetime(part.end_utc), end_utc)
+        while cursor < part_end:
             local = cursor.astimezone(tz)
             next_midnight = _local_midnight_utc(local.date() + timedelta(days=1), tz)
             if next_midnight <= cursor:  # a zone that skips midnight: always make progress
                 next_midnight = cursor + timedelta(hours=1)
-            seg_end = min(block_end, next_midnight)
-            day_name = local.strftime("%A")
+            seg_end = min(part_end, next_midnight)
+            day_name = WEEKDAYS[local.weekday()]
+            day_off = day_name in config.days_off
             rows.append({
-                "block_id": block.block_id, "uid": block.uid, "title": block.title,
-                "description": block.description, "category": block.category,
-                "subcategory": block.subcategory, "is_focus": block.is_focus,
-                "date": local.date(), "day_of_week": day_name,
-                "day_type": "Weekday" if day_name in weekdays else "Weekend",
+                **details,
+                "date": local.date(), "day_of_week": day_name, "is_day_off": day_off,
+                "day_type": "Day off" if day_off else "Workday",
+                "week_start": week_start_of(local.date(), config.week_start),
                 "start_local": cursor.astimezone(tz), "end_local": seg_end.astimezone(tz),
                 "duration_min": (seg_end - cursor).total_seconds() / 60,
             })
@@ -225,17 +274,21 @@ def split_segments(blocks: pd.DataFrame, tz: ZoneInfo, start_utc: datetime, end_
     segments = pd.DataFrame(rows)[SEGMENT_COLUMNS]
     segments["start_local"] = pd.to_datetime(segments["start_local"], utc=True).dt.tz_convert(tz)
     segments["end_local"] = pd.to_datetime(segments["end_local"], utc=True).dt.tz_convert(tz)
+    segments["score"] = segments["score"].astype("Int64")
     return segments
+
+
+def _as_datetime(value) -> datetime:
+    return value.to_pydatetime() if isinstance(value, pd.Timestamp) else value
 
 
 # --- convenience -----------------------------------------------------------------------------
 
-def analyze(source: bytes | str | Path, first_day: date, last_day: date, tz_name: str,
-            focus_categories=(), focus_minutes: int = 90, weekdays=DEFAULT_WEEKDAYS, cat_delimiter: str = ":",
+def analyze(source: bytes | str | Path, first_day: date, last_day: date, config: Config,
             ) -> tuple[pd.DataFrame, pd.DataFrame, IngestReport]:
     """Whole pipeline for the local days first_day..last_day (inclusive). Returns (blocks, segments, report)."""
-    tz = get_tz(tz_name)
+    tz = config.tz
     start_utc, end_utc = local_day_bounds(first_day, last_day, tz)
     instances = expand_instances(load_calendar(source), start_utc, end_utc)
-    blocks, report = build_blocks(instances, tz, focus_categories, focus_minutes, cat_delimiter)
-    return blocks, split_segments(blocks, tz, start_utc, end_utc, weekdays), report
+    blocks, report = build_blocks(instances, config)
+    return blocks, split_segments(split_parts(blocks), config, start_utc, end_utc), report

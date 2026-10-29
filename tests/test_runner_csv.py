@@ -3,10 +3,10 @@
 These started as expected failures in Stage 0 (IDs refer to c-c-k/docs/CODE_REVIEW.md) and became
 real tests when Stage 1 fixed the parser.
 """
-from datetime import date
+import pandas as pd
 
-import ingest
 import runner
+from conftest import FIXTURE_CONFIG
 
 
 def _summaries(df, text):
@@ -89,11 +89,13 @@ def test_cli_end_to_end_on_the_fixture(fixture_ics, tmp_path, monkeypatch, capsy
     monkeypatch.setattr(runner, "OUTPUT_CSV_PATH", str(csv_path))
 
     code = runner.main(["--ics_path", str(fixture_ics), "--start_date", "2025-09-01", "--end_date", "2025-09-08",
-                        "--timezone", "Asia/Tehran", "--focus_categories", "job", "class", "learn", "research"])
+                        "--config", str(FIXTURE_CONFIG)])
 
     assert code == 0
-    assert "Successfully processed" in capsys.readouterr().out
-    assert csv_path.exists()
+    out = capsys.readouterr().out
+    assert "Successfully processed" in out and "config.example.yaml" in out
+    df = pd.read_csv(csv_path)
+    assert df["duration_minutes"].sum() == 41 * 60 and df["is_focus_session"].sum() == 3
 
 
 def test_cli_reports_unknown_timezone_without_traceback(fixture_ics, tmp_path, monkeypatch, capsys):
@@ -117,10 +119,75 @@ def test_cli_reports_missing_file_and_bad_dates(tmp_path, monkeypatch, capsys):
     assert "YYYY-MM-DD" in capsys.readouterr().err
 
 
-def test_custom_category_delimiter_is_honoured():
-    blocks, _, _ = ingest.analyze(b"BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//t//EN\nBEGIN:VEVENT\nUID:a\n"
-                                  b"DTSTART:20250902T100000Z\nDTEND:20250902T110000Z\nSUMMARY:work | review\n"
-                                  b"END:VEVENT\nEND:VCALENDAR\n", date(2025, 9, 2), date(2025, 9, 2),
-                                  "UTC", cat_delimiter="|")
+# --- Stage 2: config, days off, even split ---------------------------------------------------
 
-    assert (blocks.iloc[0]["category"], blocks.iloc[0]["subcategory"]) == ("WORK", "review")
+def _cli_csv(tmp_path, ics_path, *extra) -> pd.DataFrame:
+    out = tmp_path / "result.csv"
+    code = runner.main(["--ics_path", str(ics_path), "--start_date", "2025-09-01", "--end_date", "2025-09-08",
+                        "--out", str(out), *extra])
+    assert code == 0
+    return pd.read_csv(out)
+
+
+def _day_type(df, day):
+    return df.loc[df["date"] == day, "day_type"].iloc[0]
+
+
+def test_out_option_writes_where_asked_and_not_to_data(fixture_ics, tmp_path, monkeypatch):
+    default_path = tmp_path / "default.csv"
+    monkeypatch.setattr(runner, "OUTPUT_CSV_PATH", str(default_path))
+
+    _cli_csv(tmp_path, fixture_ics, "--config", str(FIXTURE_CONFIG))
+
+    assert (tmp_path / "result.csv").exists() and not default_path.exists()
+
+
+def test_days_off_come_from_the_config_file(fixture_ics, tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("timezone: Asia/Tehran\ndays_off: [Saturday]\ncategories: {SLEEP: {}, ME: {}}\n")
+
+    df = _cli_csv(tmp_path, fixture_ics, "--config", str(cfg))
+
+    assert (_day_type(df, "2025-09-06"), _day_type(df, "2025-09-05")) == ("Weekend", "Weekday")
+
+
+def test_days_off_flag_and_legacy_weekdays_flag(fixture_ics, tmp_path):
+    df = _cli_csv(tmp_path, fixture_ics, "--config", str(FIXTURE_CONFIG), "--days_off", "Saturday", "Sunday")
+    assert (_day_type(df, "2025-09-06"), _day_type(df, "2025-09-05")) == ("Weekend", "Weekday")
+
+    df = _cli_csv(tmp_path, fixture_ics, "--config", str(FIXTURE_CONFIG),
+                  "--weekdays", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
+    assert (_day_type(df, "2025-09-06"), _day_type(df, "2025-09-05")) == ("Weekend", "Weekday")
+
+
+def test_old_app_arguments_are_still_accepted(fixture_ics, tmp_path):
+    df = _cli_csv(tmp_path, fixture_ics, "--config", str(FIXTURE_CONFIG), "--cat_delimiter", ":",
+                  "--subcat_delimiter", "-", "--focus_categories", "work,", "learning,", "learn,", "project",
+                  "--focus_minutes", "90", "--timezone", "Asia/Tehran", "--period", "1m")
+
+    assert df["is_focus_session"].sum() == 1  # only LEARN is both configured and in the app's old focus list
+
+
+def test_even_split_reaches_the_csv(tmp_path):
+    ics = tmp_path / "split.ics"
+    ics.write_text("BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//t//EN\nBEGIN:VEVENT\nUID:a\n"
+                   "DTSTART:20250902T053000Z\nDTEND:20250902T073000Z\nSUMMARY:ME: chill - youtube [3]\n"
+                   "END:VEVENT\nEND:VCALENDAR\n")
+
+    df = _cli_csv(tmp_path, ics, "--config", str(FIXTURE_CONFIG))
+
+    assert list(zip(df["subcategory_1"], df["start_time"], df["end_time"], df["duration_minutes"])) == [
+        ("chill", "09:00", "10:00", 60), ("youtube", "10:00", "11:00", 60)]
+
+
+def test_invalid_config_and_title_issues_are_reported(fixture_ics, tmp_path, capsys):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("timezone: UTC\ncategories: {ME: {}}\ndays_off: [Fryday]\n")
+
+    assert runner.main(["--ics_path", str(fixture_ics), "--config", str(bad), "--out", str(tmp_path / "x.csv")]) == 1
+    assert "days_off[0]: 'Fryday' is not a weekday" in capsys.readouterr().err
+
+    small = tmp_path / "small.yaml"
+    small.write_text("timezone: Asia/Tehran\ncategories: {SLEEP: {}, ME: {}}\n")
+    _cli_csv(tmp_path, fixture_ics, "--config", str(small))
+    assert "Title issue unknown_category" in capsys.readouterr().out

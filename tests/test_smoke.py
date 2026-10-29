@@ -4,7 +4,7 @@ from icalendar import Calendar
 def test_runner_imports():
     import runner
 
-    assert callable(runner.process_ics_to_csv)
+    assert callable(runner.main) and callable(runner.write_calendar_csv)
 
 
 def test_fixture_loads_with_icalendar(fixture_ics):

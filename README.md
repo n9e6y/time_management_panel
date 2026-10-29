@@ -93,6 +93,21 @@ install dependencies:
 pip install -r requirements.txt
 ```
 
+### 4. Configure
+
+Settings live in `config.yaml` (gitignored, so your personal settings stay private). Start from the example:
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+Set your `timezone`, the day your week starts (`week_start`, default Saturday), your `days_off`, and your
+categories. Without a `config.yaml`, the example is used.
+
+Event titles follow `CATEGORY: task #tag +project [score]`, e.g. `LEARN: calculus ch.4 #deep +exam-prep [4]`.
+A spaced hyphen splits a block's time evenly, back to back: `ME: chill - youtube` from 09:00 to 11:00 counts as
+`chill` 09:00-10:00 and `youtube` 10:00-11:00.
+
 ##  Usage
 
 1. **Export your calendar**:
@@ -144,12 +159,15 @@ Tests use only the synthetic calendar in `tests/fixtures/` (see `tests/fixtures/
 │   ├── ics/               # input calendar
 │   └── output/            # generated calendar.csv
 ├── src/
-│   ├── app.py             # frontend
+│   ├── app.py             # frontend (Streamlit, to be replaced)
+│   ├── config.py          # loads and validates config.yaml
 │   ├── ingest.py          # calendar parsing core
+│   ├── syntax.py          # event title grammar
 │   └── runner.py          # command-line tool
 ├── tests/
 │   ├── fixtures/          # synthetic calendar + expected results
 │   └── test_*.py
+├── config.example.yaml    # settings template (copy to config.yaml)
 ├── pyproject.toml         # pytest settings
 ├── requirements.txt       # pinned runtime + test dependencies
 └── README.md
