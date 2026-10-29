@@ -130,7 +130,7 @@ Everything runs locally; nothing is uploaded anywhere.
 ## Development
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements.txt   # includes pytest
 pytest
 ```
 
@@ -145,13 +145,13 @@ Tests use only the synthetic calendar in `tests/fixtures/` (see `tests/fixtures/
 │   └── output/            # generated calendar.csv
 ├── src/
 │   ├── app.py             # frontend
-│   └── runner.py          # processing
+│   ├── ingest.py          # calendar parsing core
+│   └── runner.py          # command-line tool
 ├── tests/
 │   ├── fixtures/          # synthetic calendar + expected results
 │   └── test_*.py
 ├── pyproject.toml         # pytest settings
-├── requirements.txt
-├── requirements-dev.txt
+├── requirements.txt       # pinned runtime + test dependencies
 └── README.md
 ```
 
