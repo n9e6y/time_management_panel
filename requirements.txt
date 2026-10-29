@@ -4,3 +4,4 @@ plotly==6.2.0
 icalendar==6.3.1
 pytz==2025.2
 recurring-ical-events==3.8.2
+pytest==9.1.1
