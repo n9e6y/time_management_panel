@@ -11,6 +11,14 @@ FIXTURE_ICS = ROOT / "tests" / "fixtures" / "google_export_sample.ics"
 FIXTURE_CONFIG = ROOT / "config.example.yaml"  # timezone Asia/Tehran, focus JOB/CLASS/LEARN/RESEARCH, day off Friday
 
 
+@pytest.fixture(autouse=True)
+def private_data_home(tmp_path, monkeypatch) -> Path:
+    """Every test gets its own personal data folder, so tests never touch ~/.time-analyzer."""
+    home = tmp_path / "time-analyzer-home"
+    monkeypatch.setenv("TIME_ANALYZER_HOME", str(home))
+    return home
+
+
 @pytest.fixture
 def fixture_ics() -> Path:
     return FIXTURE_ICS

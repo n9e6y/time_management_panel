@@ -209,3 +209,83 @@ def test_allowed_origins_can_be_set_by_environment(root, monkeypatch):
     res = client.get("/api/health", headers={"Origin": "http://localhost:3000"})
 
     assert res.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+
+# --- Stage 3.5 Part A: the calendar saved on this computer ------------------------------------
+
+AS_OF = "2025-09-08T10:30:00.000Z"
+
+
+def save(client, body=FIXTURE_ICS, name="my-log.ics"):
+    return client.put("/api/calendar", params={"name": name, "data_as_of": AS_OF}, content=body,
+                      headers={"Content-Type": "text/calendar"})
+
+
+def test_no_calendar_saved_at_first(client, private_data_home):
+    body = client.get("/api/calendar").json()
+
+    assert body["calendar"] is None and body["has_previous"] is False
+    assert body["folder"] == str(private_data_home / "calendar")
+    assert analyze(client, body=b"").status_code == 400  # no file sent and none saved
+
+
+def test_saved_calendar_is_used_by_analyze_and_survives_a_restart(client, root):
+    res = save(client)
+
+    assert res.status_code == 200
+    info = res.json()["calendar"]
+    assert (info["name"], info["events"], info["first_day"], info["last_day"]) == (
+        "my-log.ics", 10, "2025-09-01", "2025-09-08")
+    assert info["data_as_of"] == "2025-09-08T10:30:00+00:00"
+
+    restarted = TestClient(create_app(root=root, today=lambda tz: date(2025, 9, 8)))
+    assert restarted.get("/api/calendar").json()["calendar"]["name"] == "my-log.ics"
+    assert analyze(restarted, body=b"").json()["totals"]["hours"] == 41.0
+
+
+def test_unreadable_file_is_not_saved(client):
+    res = save(client, body=b"\x00garbage SUMMARY:ME: secret plan")
+
+    assert res.status_code == 400 and "secret" not in res.text
+    assert client.get("/api/calendar").json()["calendar"] is None
+
+
+def test_check_compares_without_saving(client):
+    save(client)
+    other = (b"BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//t//EN\nBEGIN:VEVENT\nUID:x\nDTSTART:20250901T090000Z\n"
+             b"DTEND:20250901T100000Z\nSUMMARY:Team standup\nEND:VEVENT\nEND:VCALENDAR\n")
+
+    res = client.post("/api/calendar/check", params={"name": "other.ics"}, content=other)
+
+    body = res.json()
+    assert body["current"]["name"] == "my-log.ics" and body["new"]["name"] == "other.ics"
+    assert {w["code"] for w in body["warnings"]} == {"shorter_span", "ends_earlier", "few_known_categories"}
+    assert client.get("/api/calendar").json()["calendar"]["name"] == "my-log.ics"
+
+
+def test_replace_restore_and_remove(client):
+    save(client, name="first.ics")
+    save(client, name="second.ics")
+    assert client.get("/api/calendar").json()["has_previous"] is True
+
+    assert client.post("/api/calendar/restore").json()["calendar"]["name"] == "first.ics"
+
+    removed = client.delete("/api/calendar").json()
+    assert removed["calendar"] is None and removed["has_previous"] is False
+    assert client.post("/api/calendar/restore").status_code == 409
+
+
+CACHES = {".git", "node_modules", "__pycache__", ".pytest_cache", ".hypothesis", "dist"}
+
+
+def repo_files() -> set[Path]:
+    return {p for p in ROOT.rglob("*") if not CACHES & set(p.parts)}
+
+
+def test_saving_writes_only_inside_the_personal_folder(client, private_data_home):
+    before = repo_files()
+
+    save(client)
+
+    assert (private_data_home / "calendar" / "current.ics").read_bytes() == FIXTURE_ICS
+    assert repo_files() == before

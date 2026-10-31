@@ -179,7 +179,8 @@ export function coverageCalendar(days: CoverageDay[], weekStart: string) {
       textStyle: b.textStyle,
       tooltip: { ...b.tooltip, formatter: (x) => {
         const d = days.find((c) => c.day === (x as unknown as { value: [string, number] }).value[0])!;
-        return `<b>${fmtDay(d.day)}</b>${d.today ? " (today, in progress)" : ""}${d.dayOff ? " · day off" : ""}<br/>${fmtHM(d.hours)} logged · ${fmtPct(d.share, 0)}`;
+        const note = d.notInFile ? " (not in this file)" : d.today ? " (today, in progress)" : d.partial ? " (file exported this day)" : "";
+        return `<b>${fmtDay(d.day)}</b>${note}${d.dayOff ? " · day off" : ""}<br/>${fmtHM(d.hours)} logged · ${fmtPct(d.share, 0)}`;
       } },
       visualMap: { type: "piecewise", orient: "horizontal", left: 0, bottom: 0, pieces: pieces(p, [0, 0.01, 0.25, 0.5, 0.75, 0.9, 1, 10], (v) => `${Math.min(100, Math.round(v * 100))}%`).map((x, i) => (i === 6 ? { ...x, label: "100%" } : x)), textStyle: { color: p.token("text-3"), fontSize: 12 }, itemWidth: 14, itemHeight: 10 },
       calendar: {
@@ -191,9 +192,9 @@ export function coverageCalendar(days: CoverageDay[], weekStart: string) {
         type: "heatmap", coordinateSystem: "calendar",
         data: days.map((d) => ({
           value: [d.day, d.share],
-          ...(d.today ? { itemStyle: { color: p.token("surface"), borderColor: p.token("text-3"), borderType: "dashed", borderWidth: 1 } } : {}),
+          ...(d.partial || d.notInFile ? { itemStyle: { color: p.token("surface"), borderColor: p.token(d.notInFile ? "nif-edge" : "text-3"), borderType: d.notInFile ? "dotted" : "dashed", borderWidth: 1 } } : {}),
         })),
-        label: { show: true, fontSize: 11, color: p.token("text"), formatter: (x) => { const d = days.find((c) => c.day === (x.value as [string, number])[0])!; return d.today ? "today" : `${Math.round(d.share * 100)}%`; } },
+        label: { show: true, fontSize: 11, color: p.token("text"), formatter: (x) => { const d = days.find((c) => c.day === (x.value as [string, number])[0])!; return d.notInFile ? "not in file" : d.today ? "today" : d.partial ? "as of" : `${Math.round(d.share * 100)}%`; } },
       }],
     };
   };
