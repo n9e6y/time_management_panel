@@ -63,6 +63,7 @@ def test_analyze_the_fixture(client):
     assert body["range"] == {"first_day": "2025-09-01", "last_day": "2025-09-08", "timezone": "Asia/Tehran",
                              "week_start": "Saturday", "days_off": ["Friday"]}
     assert body["config_source"] == "config.example.yaml"
+    assert body["calendar"] == {"first_day": "2025-09-01", "last_day": "2025-09-08"}
     assert {s["reason"] for s in body["report"]["skipped"]} == {"all_day", "cancelled"}
 
 

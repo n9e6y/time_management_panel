@@ -148,7 +148,7 @@ def test_config_round_trips_through_plain_settings():
 
     settings = config.config_to_dict(cfg)
 
-    assert settings["days_off"] == ["Friday"] and settings["categories"]["LEARN"] == {"focus": True}
+    assert settings["days_off"] == ["Friday"] and settings["categories"]["LEARN"] == {"focus": True, "color": 4}
     assert config.config_from_dict(settings, source=cfg.source) == cfg
 
 
@@ -165,3 +165,32 @@ def test_save_config_writes_a_file_that_loads_back(tmp_path):
 
     assert path.read_text().startswith("# Time Analyzer settings")
     assert config.config_to_dict(config.load_config(path)) == config.config_to_dict(cfg)
+
+
+# --- color slots: a category keeps its color when reordered (decided 2026-10-29) ---------------
+
+def test_colors_default_to_config_order():
+    cfg = config.load_config(EXAMPLE)
+
+    assert [c.color for c in cfg.categories.values()] == [1, 2, 3, 4, 5, 6, 7]
+
+
+def test_explicit_colors_survive_reordering_and_new_categories_take_the_first_free_slot():
+    cfg = config.config_from_dict(with_changes(categories={"ME": {"color": 7}, "SLEEP": {"color": 1}, "GYM": {}}))
+
+    assert {n: c.color for n, c in cfg.categories.items()} == {"ME": 7, "SLEEP": 1, "GYM": 2}
+    assert config.config_to_dict(cfg)["categories"]["GYM"] == {"focus": False, "color": 2}
+
+
+def test_categories_beyond_the_ninth_have_no_color():
+    names = {f"C{i}": {} for i in range(10)}
+
+    cfg = config.config_from_dict(with_changes(categories=names, legacy_categories={}))
+
+    assert [c.color for c in cfg.categories.values()] == [1, 2, 3, 4, 5, 6, 7, 8, 9, None]
+
+
+def test_bad_or_duplicate_colors_are_rejected():
+    text = error_text(with_changes(categories={"ME": {"color": 10}, "SLEEP": {"color": 1}, "JOB": {"color": 1}}))
+
+    assert "categories.ME.color" in text and "categories.JOB.color: slot 1 is already used" in text

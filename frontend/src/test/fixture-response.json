@@ -1,0 +1,731 @@
+{
+ "analysis": {
+  "range": {
+   "first_day": "2025-09-01",
+   "last_day": "2025-09-08",
+   "timezone": "Asia/Tehran",
+   "week_start": "Saturday",
+   "days_off": [
+    "Friday"
+   ]
+  },
+  "config_source": "config.example.yaml",
+  "calendar": {
+   "first_day": "2025-09-01",
+   "last_day": "2025-09-08"
+  },
+  "totals": {
+   "hours": 41.0,
+   "blocks": 10,
+   "segments": 14,
+   "skipped": 2,
+   "overlaps": 0,
+   "title_issues": 0
+  },
+  "blocks": [
+   {
+    "block_id": 0,
+    "uid": "fixture-social",
+    "title": "SOCIAL: family dinner [5]",
+    "description": "",
+    "comment": "",
+    "start_utc": "2025-09-01T15:30:00+00:00",
+    "end_utc": "2025-09-01T17:30:00+00:00",
+    "start_local": "2025-09-01T19:00:00+03:30",
+    "end_local": "2025-09-01T21:00:00+03:30",
+    "duration_min": 120.0,
+    "category": "SOCIAL",
+    "task": "family dinner",
+    "subcategories": [
+     "family dinner"
+    ],
+    "tags": [],
+    "projects": [],
+    "score": 5,
+    "issues": [],
+    "is_focus": false
+   },
+   {
+    "block_id": 1,
+    "uid": "fixture-sleep",
+    "title": "SLEEP: night",
+    "description": "",
+    "comment": "",
+    "start_utc": "2025-09-01T19:30:00+00:00",
+    "end_utc": "2025-09-02T03:30:00+00:00",
+    "start_local": "2025-09-01T23:00:00+03:30",
+    "end_local": "2025-09-02T07:00:00+03:30",
+    "duration_min": 480.0,
+    "category": "SLEEP",
+    "task": "night",
+    "subcategories": [
+     "night"
+    ],
+    "tags": [],
+    "projects": [],
+    "score": null,
+    "issues": [],
+    "is_focus": false
+   },
+   {
+    "block_id": 2,
+    "uid": "fixture-learn",
+    "title": "LEARN: calculus ch.4 #deep +exam-prep [4]",
+    "description": "got stuck on limits, review chapter 3",
+    "comment": "got stuck on limits, review chapter 3",
+    "start_utc": "2025-09-02T05:30:00+00:00",
+    "end_utc": "2025-09-02T07:30:00+00:00",
+    "start_local": "2025-09-02T09:00:00+03:30",
+    "end_local": "2025-09-02T11:00:00+03:30",
+    "duration_min": 120.0,
+    "category": "LEARN",
+    "task": "calculus ch.4",
+    "subcategories": [
+     "calculus ch.4"
+    ],
+    "tags": [
+     "deep"
+    ],
+    "projects": [
+     "exam-prep"
+    ],
+    "score": 4,
+    "issues": [],
+    "is_focus": true
+   },
+   {
+    "block_id": 3,
+    "uid": "fixture-duration",
+    "title": "ME: lunch",
+    "description": "",
+    "comment": "",
+    "start_utc": "2025-09-02T10:30:00+00:00",
+    "end_utc": "2025-09-02T11:30:00+00:00",
+    "start_local": "2025-09-02T14:00:00+03:30",
+    "end_local": "2025-09-02T15:00:00+03:30",
+    "duration_min": 60.0,
+    "category": "ME",
+    "task": "lunch",
+    "subcategories": [
+     "lunch"
+    ],
+    "tags": [],
+    "projects": [],
+    "score": null,
+    "issues": [],
+    "is_focus": false
+   },
+   {
+    "block_id": 4,
+    "uid": "fixture-sleep",
+    "title": "SLEEP: night",
+    "description": "",
+    "comment": "",
+    "start_utc": "2025-09-02T19:30:00+00:00",
+    "end_utc": "2025-09-03T03:30:00+00:00",
+    "start_local": "2025-09-02T23:00:00+03:30",
+    "end_local": "2025-09-03T07:00:00+03:30",
+    "duration_min": 480.0,
+    "category": "SLEEP",
+    "task": "night",
+    "subcategories": [
+     "night"
+    ],
+    "tags": [],
+    "projects": [],
+    "score": null,
+    "issues": [],
+    "is_focus": false
+   },
+   {
+    "block_id": 5,
+    "uid": "fixture-unplanned",
+    "title": "ME: fixing laptop #unplanned [2]",
+    "description": "",
+    "comment": "",
+    "start_utc": "2025-09-03T12:30:00+00:00",
+    "end_utc": "2025-09-03T14:00:00+00:00",
+    "start_local": "2025-09-03T16:00:00+03:30",
+    "end_local": "2025-09-03T17:30:00+03:30",
+    "duration_min": 90.0,
+    "category": "ME",
+    "task": "fixing laptop",
+    "subcategories": [
+     "fixing laptop"
+    ],
+    "tags": [
+     "unplanned"
+    ],
+    "projects": [],
+    "score": 2,
+    "issues": [],
+    "is_focus": false
+   },
+   {
+    "block_id": 6,
+    "uid": "fixture-research",
+    "title": "RESEARCH: reading transformer paper",
+    "description": "",
+    "comment": "",
+    "start_utc": "2025-09-04T06:30:00+00:00",
+    "end_utc": "2025-09-04T08:00:00+00:00",
+    "start_local": "2025-09-04T10:00:00+03:30",
+    "end_local": "2025-09-04T11:30:00+03:30",
+    "duration_min": 90.0,
+    "category": "RESEARCH",
+    "task": "reading transformer paper",
+    "subcategories": [
+     "reading transformer paper"
+    ],
+    "tags": [],
+    "projects": [],
+    "score": null,
+    "issues": [],
+    "is_focus": true
+   },
+   {
+    "block_id": 7,
+    "uid": "fixture-sleep",
+    "title": "SLEEP: night late",
+    "description": "",
+    "comment": "",
+    "start_utc": "2025-09-04T21:30:00+00:00",
+    "end_utc": "2025-09-05T04:30:00+00:00",
+    "start_local": "2025-09-05T01:00:00+03:30",
+    "end_local": "2025-09-05T08:00:00+03:30",
+    "duration_min": 420.0,
+    "category": "SLEEP",
+    "task": "night late",
+    "subcategories": [
+     "night late"
+    ],
+    "tags": [],
+    "projects": [],
+    "score": null,
+    "issues": [],
+    "is_focus": false
+   },
+   {
+    "block_id": 8,
+    "uid": "fixture-sleep",
+    "title": "SLEEP: night",
+    "description": "",
+    "comment": "",
+    "start_utc": "2025-09-05T19:30:00+00:00",
+    "end_utc": "2025-09-06T03:30:00+00:00",
+    "start_local": "2025-09-05T23:00:00+03:30",
+    "end_local": "2025-09-06T07:00:00+03:30",
+    "duration_min": 480.0,
+    "category": "SLEEP",
+    "task": "night",
+    "subcategories": [
+     "night"
+    ],
+    "tags": [],
+    "projects": [],
+    "score": null,
+    "issues": [],
+    "is_focus": false
+   },
+   {
+    "block_id": 9,
+    "uid": "fixture-utc-midnight",
+    "title": "CLASS: lab report #deep [3]",
+    "description": "",
+    "comment": "",
+    "start_utc": "2025-09-06T19:30:00+00:00",
+    "end_utc": "2025-09-06T21:30:00+00:00",
+    "start_local": "2025-09-06T23:00:00+03:30",
+    "end_local": "2025-09-07T01:00:00+03:30",
+    "duration_min": 120.0,
+    "category": "CLASS",
+    "task": "lab report",
+    "subcategories": [
+     "lab report"
+    ],
+    "tags": [
+     "deep"
+    ],
+    "projects": [],
+    "score": 3,
+    "issues": [],
+    "is_focus": true
+   }
+  ],
+  "segments": [
+   {
+    "part_index": 0,
+    "subcategory": "family dinner",
+    "block_id": 0,
+    "uid": "fixture-social",
+    "title": "SOCIAL: family dinner [5]",
+    "category": "SOCIAL",
+    "task": "family dinner",
+    "tags": [],
+    "projects": [],
+    "score": 5,
+    "comment": "",
+    "is_focus": false,
+    "date": "2025-09-01",
+    "day_of_week": "Monday",
+    "is_day_off": false,
+    "day_type": "Workday",
+    "week_start": "2025-08-30",
+    "start_local": "2025-09-01T19:00:00+03:30",
+    "end_local": "2025-09-01T21:00:00+03:30",
+    "duration_min": 120.0
+   },
+   {
+    "part_index": 0,
+    "subcategory": "night",
+    "block_id": 1,
+    "uid": "fixture-sleep",
+    "title": "SLEEP: night",
+    "category": "SLEEP",
+    "task": "night",
+    "tags": [],
+    "projects": [],
+    "score": null,
+    "comment": "",
+    "is_focus": false,
+    "date": "2025-09-01",
+    "day_of_week": "Monday",
+    "is_day_off": false,
+    "day_type": "Workday",
+    "week_start": "2025-08-30",
+    "start_local": "2025-09-01T23:00:00+03:30",
+    "end_local": "2025-09-02T00:00:00+03:30",
+    "duration_min": 60.0
+   },
+   {
+    "part_index": 0,
+    "subcategory": "night",
+    "block_id": 1,
+    "uid": "fixture-sleep",
+    "title": "SLEEP: night",
+    "category": "SLEEP",
+    "task": "night",
+    "tags": [],
+    "projects": [],
+    "score": null,
+    "comment": "",
+    "is_focus": false,
+    "date": "2025-09-02",
+    "day_of_week": "Tuesday",
+    "is_day_off": false,
+    "day_type": "Workday",
+    "week_start": "2025-08-30",
+    "start_local": "2025-09-02T00:00:00+03:30",
+    "end_local": "2025-09-02T07:00:00+03:30",
+    "duration_min": 420.0
+   },
+   {
+    "part_index": 0,
+    "subcategory": "calculus ch.4",
+    "block_id": 2,
+    "uid": "fixture-learn",
+    "title": "LEARN: calculus ch.4 #deep +exam-prep [4]",
+    "category": "LEARN",
+    "task": "calculus ch.4",
+    "tags": [
+     "deep"
+    ],
+    "projects": [
+     "exam-prep"
+    ],
+    "score": 4,
+    "comment": "got stuck on limits, review chapter 3",
+    "is_focus": true,
+    "date": "2025-09-02",
+    "day_of_week": "Tuesday",
+    "is_day_off": false,
+    "day_type": "Workday",
+    "week_start": "2025-08-30",
+    "start_local": "2025-09-02T09:00:00+03:30",
+    "end_local": "2025-09-02T11:00:00+03:30",
+    "duration_min": 120.0
+   },
+   {
+    "part_index": 0,
+    "subcategory": "lunch",
+    "block_id": 3,
+    "uid": "fixture-duration",
+    "title": "ME: lunch",
+    "category": "ME",
+    "task": "lunch",
+    "tags": [],
+    "projects": [],
+    "score": null,
+    "comment": "",
+    "is_focus": false,
+    "date": "2025-09-02",
+    "day_of_week": "Tuesday",
+    "is_day_off": false,
+    "day_type": "Workday",
+    "week_start": "2025-08-30",
+    "start_local": "2025-09-02T14:00:00+03:30",
+    "end_local": "2025-09-02T15:00:00+03:30",
+    "duration_min": 60.0
+   },
+   {
+    "part_index": 0,
+    "subcategory": "night",
+    "block_id": 4,
+    "uid": "fixture-sleep",
+    "title": "SLEEP: night",
+    "category": "SLEEP",
+    "task": "night",
+    "tags": [],
+    "projects": [],
+    "score": null,
+    "comment": "",
+    "is_focus": false,
+    "date": "2025-09-02",
+    "day_of_week": "Tuesday",
+    "is_day_off": false,
+    "day_type": "Workday",
+    "week_start": "2025-08-30",
+    "start_local": "2025-09-02T23:00:00+03:30",
+    "end_local": "2025-09-03T00:00:00+03:30",
+    "duration_min": 60.0
+   },
+   {
+    "part_index": 0,
+    "subcategory": "night",
+    "block_id": 4,
+    "uid": "fixture-sleep",
+    "title": "SLEEP: night",
+    "category": "SLEEP",
+    "task": "night",
+    "tags": [],
+    "projects": [],
+    "score": null,
+    "comment": "",
+    "is_focus": false,
+    "date": "2025-09-03",
+    "day_of_week": "Wednesday",
+    "is_day_off": false,
+    "day_type": "Workday",
+    "week_start": "2025-08-30",
+    "start_local": "2025-09-03T00:00:00+03:30",
+    "end_local": "2025-09-03T07:00:00+03:30",
+    "duration_min": 420.0
+   },
+   {
+    "part_index": 0,
+    "subcategory": "fixing laptop",
+    "block_id": 5,
+    "uid": "fixture-unplanned",
+    "title": "ME: fixing laptop #unplanned [2]",
+    "category": "ME",
+    "task": "fixing laptop",
+    "tags": [
+     "unplanned"
+    ],
+    "projects": [],
+    "score": 2,
+    "comment": "",
+    "is_focus": false,
+    "date": "2025-09-03",
+    "day_of_week": "Wednesday",
+    "is_day_off": false,
+    "day_type": "Workday",
+    "week_start": "2025-08-30",
+    "start_local": "2025-09-03T16:00:00+03:30",
+    "end_local": "2025-09-03T17:30:00+03:30",
+    "duration_min": 90.0
+   },
+   {
+    "part_index": 0,
+    "subcategory": "reading transformer paper",
+    "block_id": 6,
+    "uid": "fixture-research",
+    "title": "RESEARCH: reading transformer paper",
+    "category": "RESEARCH",
+    "task": "reading transformer paper",
+    "tags": [],
+    "projects": [],
+    "score": null,
+    "comment": "",
+    "is_focus": true,
+    "date": "2025-09-04",
+    "day_of_week": "Thursday",
+    "is_day_off": false,
+    "day_type": "Workday",
+    "week_start": "2025-08-30",
+    "start_local": "2025-09-04T10:00:00+03:30",
+    "end_local": "2025-09-04T11:30:00+03:30",
+    "duration_min": 90.0
+   },
+   {
+    "part_index": 0,
+    "subcategory": "night late",
+    "block_id": 7,
+    "uid": "fixture-sleep",
+    "title": "SLEEP: night late",
+    "category": "SLEEP",
+    "task": "night late",
+    "tags": [],
+    "projects": [],
+    "score": null,
+    "comment": "",
+    "is_focus": false,
+    "date": "2025-09-05",
+    "day_of_week": "Friday",
+    "is_day_off": true,
+    "day_type": "Day off",
+    "week_start": "2025-08-30",
+    "start_local": "2025-09-05T01:00:00+03:30",
+    "end_local": "2025-09-05T08:00:00+03:30",
+    "duration_min": 420.0
+   },
+   {
+    "part_index": 0,
+    "subcategory": "night",
+    "block_id": 8,
+    "uid": "fixture-sleep",
+    "title": "SLEEP: night",
+    "category": "SLEEP",
+    "task": "night",
+    "tags": [],
+    "projects": [],
+    "score": null,
+    "comment": "",
+    "is_focus": false,
+    "date": "2025-09-05",
+    "day_of_week": "Friday",
+    "is_day_off": true,
+    "day_type": "Day off",
+    "week_start": "2025-08-30",
+    "start_local": "2025-09-05T23:00:00+03:30",
+    "end_local": "2025-09-06T00:00:00+03:30",
+    "duration_min": 60.0
+   },
+   {
+    "part_index": 0,
+    "subcategory": "night",
+    "block_id": 8,
+    "uid": "fixture-sleep",
+    "title": "SLEEP: night",
+    "category": "SLEEP",
+    "task": "night",
+    "tags": [],
+    "projects": [],
+    "score": null,
+    "comment": "",
+    "is_focus": false,
+    "date": "2025-09-06",
+    "day_of_week": "Saturday",
+    "is_day_off": false,
+    "day_type": "Workday",
+    "week_start": "2025-09-06",
+    "start_local": "2025-09-06T00:00:00+03:30",
+    "end_local": "2025-09-06T07:00:00+03:30",
+    "duration_min": 420.0
+   },
+   {
+    "part_index": 0,
+    "subcategory": "lab report",
+    "block_id": 9,
+    "uid": "fixture-utc-midnight",
+    "title": "CLASS: lab report #deep [3]",
+    "category": "CLASS",
+    "task": "lab report",
+    "tags": [
+     "deep"
+    ],
+    "projects": [],
+    "score": 3,
+    "comment": "",
+    "is_focus": true,
+    "date": "2025-09-06",
+    "day_of_week": "Saturday",
+    "is_day_off": false,
+    "day_type": "Workday",
+    "week_start": "2025-09-06",
+    "start_local": "2025-09-06T23:00:00+03:30",
+    "end_local": "2025-09-07T00:00:00+03:30",
+    "duration_min": 60.0
+   },
+   {
+    "part_index": 0,
+    "subcategory": "lab report",
+    "block_id": 9,
+    "uid": "fixture-utc-midnight",
+    "title": "CLASS: lab report #deep [3]",
+    "category": "CLASS",
+    "task": "lab report",
+    "tags": [
+     "deep"
+    ],
+    "projects": [],
+    "score": 3,
+    "comment": "",
+    "is_focus": true,
+    "date": "2025-09-07",
+    "day_of_week": "Sunday",
+    "is_day_off": false,
+    "day_type": "Workday",
+    "week_start": "2025-09-06",
+    "start_local": "2025-09-07T00:00:00+03:30",
+    "end_local": "2025-09-07T01:00:00+03:30",
+    "duration_min": 60.0
+   }
+  ],
+  "report": {
+   "skipped": [
+    {
+     "uid": "fixture-social",
+     "title": "SOCIAL: family dinner [5]",
+     "start": "2025-09-08T19:00:00+03:30",
+     "reason": "cancelled"
+    },
+    {
+     "uid": "fixture-allday",
+     "title": "Birthday reminder",
+     "start": "2025-09-02",
+     "reason": "all_day"
+    }
+   ],
+   "overlaps": [],
+   "title_issues": {}
+  }
+ },
+ "config": {
+  "settings": {
+   "timezone": "Asia/Tehran",
+   "week_start": "Saturday",
+   "days_off": [
+    "Friday"
+   ],
+   "categories": {
+    "SLEEP": {
+     "focus": false,
+     "color": 1
+    },
+    "JOB": {
+     "focus": true,
+     "color": 2
+    },
+    "CLASS": {
+     "focus": true,
+     "color": 3
+    },
+    "LEARN": {
+     "focus": true,
+     "color": 4
+    },
+    "RESEARCH": {
+     "focus": true,
+     "color": 5
+    },
+    "SOCIAL": {
+     "focus": false,
+     "color": 6
+    },
+    "ME": {
+     "focus": false,
+     "color": 7
+    }
+   },
+   "legacy_categories": {
+    "URGANT": {
+     "map_to": null,
+     "add_tags": [
+      "unplanned"
+     ]
+    },
+    "URGENT": {
+     "map_to": null,
+     "add_tags": [
+      "unplanned"
+     ]
+    }
+   },
+   "focus": {
+    "min_minutes": 90
+   },
+   "syntax": {
+    "subcategory_separator": " - "
+   },
+   "tags": {
+    "known": [
+     "deep",
+     "shallow",
+     "unplanned"
+    ]
+   }
+  },
+  "source": "config.example.yaml"
+ },
+ "periods": {
+  "presets": [
+   {
+    "id": "1w",
+    "label": "Last 7 days",
+    "kind": "rolling"
+   },
+   {
+    "id": "2w",
+    "label": "Last 14 days",
+    "kind": "rolling"
+   },
+   {
+    "id": "1m",
+    "label": "Last 30 days",
+    "kind": "rolling"
+   },
+   {
+    "id": "3m",
+    "label": "Last 90 days",
+    "kind": "rolling"
+   },
+   {
+    "id": "6m",
+    "label": "Last 6 months",
+    "kind": "rolling"
+   },
+   {
+    "id": "1y",
+    "label": "Last 12 months",
+    "kind": "rolling"
+   },
+   {
+    "id": "2y",
+    "label": "Last 2 years",
+    "kind": "rolling"
+   },
+   {
+    "id": "5y",
+    "label": "Last 5 years",
+    "kind": "rolling"
+   },
+   {
+    "id": "this_week",
+    "label": "This week",
+    "kind": "calendar"
+   },
+   {
+    "id": "last_week",
+    "label": "Last week",
+    "kind": "calendar"
+   },
+   {
+    "id": "this_month",
+    "label": "This month",
+    "kind": "calendar"
+   },
+   {
+    "id": "last_month",
+    "label": "Last month",
+    "kind": "calendar"
+   },
+   {
+    "id": "this_year",
+    "label": "This year",
+    "kind": "calendar"
+   }
+  ],
+  "default": "1m"
+ }
+}

@@ -233,3 +233,7 @@ CLAUDE.local.md
 # --- Local planning folder ---
 /c-c-k
 .claude
+
+# --- Frontend ---
+node_modules/
+frontend/dist/

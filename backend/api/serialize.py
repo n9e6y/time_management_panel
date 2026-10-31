@@ -36,6 +36,7 @@ def analysis_payload(blocks: pd.DataFrame, segments: pd.DataFrame, report, first
                   "timezone": settings["timezone"], "week_start": settings["week_start"],
                   "days_off": settings["days_off"]},
         "config_source": source,
+        "calendar": {"first_day": to_json(report.calendar_first), "last_day": to_json(report.calendar_last)},
         "totals": {
             "hours": float(segments["duration_min"].sum()) / 60 if not segments.empty else 0.0,
             "blocks": len(blocks), "segments": len(segments), "skipped": len(report.skipped),

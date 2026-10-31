@@ -1,4 +1,4 @@
-"""CLI: turn an .ics calendar into data/output/calendar.csv (read by the old Streamlit app).
+"""CLI: turn an .ics calendar into a CSV (default data/output/calendar.csv) for ad-hoc analysis.
 
 All parsing lives in ``ingest.py`` and settings in ``config.yaml`` (``config.py``); this module only handles
 arguments, files and the CSV layout. It stays as the command-line tool after Stage 3.
@@ -102,7 +102,7 @@ def config_with_overrides(args) -> config_module.Config:
         cfg = replace(cfg, week_start=_weekday(args.week_start))
     if args.days_off is not None:
         cfg = replace(cfg, days_off=frozenset(_weekday(d) for d in args.days_off))
-    elif args.weekdays is not None:  # legacy flag from the old app: every other day is a day off
+    elif args.weekdays is not None:  # legacy flag: working days; every other day is a day off
         working = {_weekday(d) for d in args.weekdays}
         cfg = replace(cfg, days_off=frozenset(d for d in ingest.WEEKDAYS if d not in working))
     if args.focus_categories is not None:
@@ -141,9 +141,9 @@ def main(argv=None):
                         help="Override which configured categories count toward focus sessions.")
     parser.add_argument('--focus_minutes', type=int, default=None,
                         help="Override the minimum duration in minutes for a focus session.")
-    parser.add_argument('--cat_delimiter', type=str, default=None, help="Ignored (kept for the old app).")
+    parser.add_argument('--cat_delimiter', type=str, default=None, help="Ignored (kept for older scripts).")
     parser.add_argument('--subcat_delimiter', type=str, default=None,
-                        help="Ignored (kept for the old app): the separator is set in the config.")
+                        help="Ignored (kept for older scripts): the separator is set in the config.")
     parser.add_argument('--start_date', type=str, default=None,
                         help="Start date for analysis (YYYY-MM-DD). Overrides --period.")
     parser.add_argument('--end_date', type=str, default=None,

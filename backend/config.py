@@ -1,6 +1,6 @@
 """Load and validate the settings file (config.yaml, or config.example.yaml as a fallback).
 
-Pure apart from reading and writing the file: no Streamlit, no web framework. Spec: c-c-k/docs/stages/STAGE_2_syntax_and_config.md.
+Pure apart from reading and writing the file: no web framework. Spec: c-c-k/docs/stages/STAGE_2_syntax_and_config.md.
 Every problem in a config is collected and reported at once, so one run shows everything to fix.
 """
 from __future__ import annotations
@@ -24,9 +24,13 @@ class ConfigError(ValueError):
     """A config that can't be used; the message lists every problem found."""
 
 
+COLOR_SLOTS = 9  # category colors --cat-1 … --cat-9 in the frontend; later categories use the "Other" grey
+
+
 @dataclass(frozen=True)
 class CategoryConfig:
     focus: bool = False
+    color: int | None = None  # color slot 1-9, kept when categories are reordered
 
 
 @dataclass(frozen=True)
@@ -89,6 +93,7 @@ def _name_list(value, where: str, pattern: re.Pattern, errors: list[str]) -> lis
 
 def _categories(value, errors: list[str]) -> dict[str, CategoryConfig]:
     categories: dict[str, CategoryConfig] = {}
+    used: set[int] = set()
     for name, settings in _mapping(value, "categories", errors).items():
         if not isinstance(name, str) or not CATEGORY_NAME.fullmatch(name.strip()):
             errors.append(f"categories: {name!r} is not a valid category name (letters, digits, '_', spaces)")
@@ -101,7 +106,20 @@ def _categories(value, errors: list[str]) -> dict[str, CategoryConfig]:
         if not isinstance(focus, bool):
             errors.append(f"categories.{key}.focus: expected true or false, got {focus!r}")
             focus = False
-        categories[key] = CategoryConfig(focus=focus)
+        color = settings.get("color")
+        if color is not None:
+            if isinstance(color, bool) or not isinstance(color, int) or not 1 <= color <= COLOR_SLOTS:
+                errors.append(f"categories.{key}.color: expected a color slot from 1 to {COLOR_SLOTS}, got {color!r}")
+                color = None
+            elif color in used:
+                errors.append(f"categories.{key}.color: slot {color} is already used by another category")
+                color = None
+            else:
+                used.add(color)
+        categories[key] = CategoryConfig(focus=focus, color=color)
+    free = (slot for slot in range(1, COLOR_SLOTS + 1) if slot not in used)
+    categories = {name: cat if cat.color else CategoryConfig(cat.focus, next(free, None))
+                  for name, cat in categories.items()}
     if not categories and not any(e.startswith("categories") for e in errors):
         errors.append("categories: at least one category is required")
     return categories
@@ -209,7 +227,7 @@ def config_to_dict(cfg: Config) -> dict:
         "timezone": cfg.timezone,
         "week_start": cfg.week_start,
         "days_off": [day for day in WEEKDAYS if day in cfg.days_off],
-        "categories": {name: {"focus": cat.focus} for name, cat in cfg.categories.items()},
+        "categories": {name: {"focus": cat.focus, "color": cat.color} for name, cat in cfg.categories.items()},
         "legacy_categories": {name: {"map_to": rule.map_to, "add_tags": list(rule.add_tags)}
                               for name, rule in cfg.legacy_categories.items()},
         "focus": {"min_minutes": cfg.focus_min_minutes},

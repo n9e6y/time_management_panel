@@ -418,3 +418,27 @@ def test_event_outside_range_is_excluded_and_edges_are_clipped():
     assert blocks.iloc[0]["duration_min"] == 180  # block keeps its full length
     assert list(segments["date"]) == [date(2025, 9, 1)]
     assert segments["duration_min"].sum() == 150  # only the part inside the range is counted
+
+
+# --- calendar span (Stage 3: lets the app say which dates the file covers) ---------------------
+
+def test_report_says_which_dates_the_calendar_covers(result):
+    _, _, report = result
+
+    assert (report.calendar_first, report.calendar_last) == (date(2025, 9, 1), date(2025, 9, 8))
+
+
+def test_calendar_span_ignores_the_analysis_range_and_counts_recurrence_end_dates():
+    ics = make_ics("UID:a\nDTSTART:20240105T090000Z\nDTEND:20240105T100000Z\nSUMMARY:ME: a",
+                   "UID:b\nDTSTART:20250301T090000Z\nDTEND:20250301T100000Z\nRRULE:FREQ=DAILY;UNTIL=20251231T000000Z\n"
+                   "SUMMARY:SLEEP: b")
+
+    _, _, report = run(ics, "UTC", date(2025, 9, 1), date(2025, 9, 2))
+
+    assert (report.calendar_first, report.calendar_last) == (date(2024, 1, 5), date(2025, 12, 31))
+
+
+def test_empty_calendar_has_no_span():
+    _, _, report = run(make_ics(), "UTC")
+
+    assert (report.calendar_first, report.calendar_last) == (None, None)

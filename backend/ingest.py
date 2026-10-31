@@ -54,6 +54,8 @@ class IngestReport:
     skipped: list[dict] = field(default_factory=list)   # uid, title, start, reason
     overlaps: list[dict] = field(default_factory=list)  # block_a, block_b, minutes
     title_issues: dict[str, list[dict]] = field(default_factory=dict)  # issue code -> blocks (validation report)
+    calendar_first: date | None = None  # first local day any event in the file starts
+    calendar_last: date | None = None   # last local day an event starts or a recurrence ends
 
 
 # --- timezone helpers ------------------------------------------------------------------------
@@ -117,6 +119,20 @@ def expand_instances(cal: Calendar, start_utc: datetime, end_utc: datetime) -> l
             cancelled=str(event.get("STATUS", "")).upper() == "CANCELLED",
         ))
     return instances
+
+
+def calendar_span(cal: Calendar, tz: ZoneInfo) -> tuple[date | None, date | None]:
+    """The local days the whole file covers, regardless of the analysis range (open-ended rules count their start)."""
+    days = []
+    for event in cal.walk("VEVENT"):
+        rule = event.get("RRULE") or {}
+        for value in [event.get("DTSTART"), *rule.get("UNTIL", [])]:
+            value = getattr(value, "dt", value)
+            if isinstance(value, datetime):
+                days.append(_to_utc(value, tz).astimezone(tz).date())
+            elif isinstance(value, date):
+                days.append(value)
+    return (min(days), max(days)) if days else (None, None)
 
 
 # --- blocks ----------------------------------------------------------------------------------
@@ -289,6 +305,7 @@ def analyze(source: bytes | str | Path, first_day: date, last_day: date, config:
     """Whole pipeline for the local days first_day..last_day (inclusive). Returns (blocks, segments, report)."""
     tz = config.tz
     start_utc, end_utc = local_day_bounds(first_day, last_day, tz)
-    instances = expand_instances(load_calendar(source), start_utc, end_utc)
-    blocks, report = build_blocks(instances, config)
+    cal = load_calendar(source)
+    blocks, report = build_blocks(expand_instances(cal, start_utc, end_utc), config)
+    report.calendar_first, report.calendar_last = calendar_span(cal, tz)
     return blocks, split_segments(split_parts(blocks), config, start_utc, end_utc), report
