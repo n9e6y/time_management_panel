@@ -102,6 +102,44 @@ def test_custom_separator_from_config():
     assert syntax.parse_title("ME: chill / youtube - music", cfg).subcategories == ["chill", "youtube - music"]
 
 
+@pytest.mark.parametrize("title", [
+    "\u200bSleep: night",       # zero-width space before the category
+    "Sle\u200cep: night",       # zero-width non-joiner (common with Persian keyboards)
+    "Sleep\ufeff: night",       # byte-order mark
+    "Sleep\uff1a night",        # full-width colon
+    "\uff33\uff2c\uff25\uff25\uff30: night",  # full-width letters
+    "sLeEp\u00a0: night",       # mixed case and a no-break space
+])
+def test_hidden_and_look_alike_characters_do_not_break_the_category(title):
+    p = syntax.parse_title(title, CONFIG)
+
+    assert (p.category, p.task, p.issues) == ("SLEEP", "night", [])
+
+
+@pytest.mark.parametrize("title", ["Sleep", "sleep", "sleeP", "SLEEP", "  Sle\u200cep  "])
+def test_a_title_that_is_just_a_category_name_counts_as_that_category(title):
+    p = syntax.parse_title(title, CONFIG)
+
+    assert (p.category, p.task, p.subcategories, p.issues) == ("SLEEP", "", [], [])
+
+
+def test_bare_category_keeps_its_tags_and_score_and_legacy_rules():
+    assert (lambda p: (p.category, p.tags, p.score))(syntax.parse_title("sleep #deep [4]", CONFIG)) == ("SLEEP", ["deep"], 4)
+    assert (lambda p: (p.category, p.tags, p.issues))(syntax.parse_title("Urgent", CONFIG)) == (
+        "URGENT", ["unplanned"], ["legacy_category"])
+
+
+def test_other_titles_without_a_colon_stay_uncategorized():
+    for title in ["Lunch", "Sleep well", "sleeping"]:
+        assert syntax.parse_title(title, CONFIG).issues == ["missing_category"], title
+
+
+def test_zero_width_non_joiner_inside_the_task_is_kept():
+    p = syntax.parse_title("ME: \u0645\u06cc\u200c\u062e\u0648\u0627\u0645", CONFIG)
+
+    assert "\u200c" in p.task and p.category == "ME"
+
+
 def test_non_text_title_does_not_raise():
     p = syntax.parse_title(None, CONFIG)
 

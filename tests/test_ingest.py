@@ -261,14 +261,25 @@ def test_hyphens_without_spaces_never_split():
 # --- titles with issues -----------------------------------------------------------------------
 
 def test_title_without_colon_is_uncategorized_and_reported():
-    ics = make_ics("UID:a\nDTSTART:20250902T100000Z\nDTEND:20250902T110000Z\nSUMMARY:Sleep")
+    ics = make_ics("UID:a\nDTSTART:20250902T100000Z\nDTEND:20250902T110000Z\nSUMMARY:Lunch break")
 
     blocks, segments, report = run(ics, "UTC")
 
     row = blocks.iloc[0]
-    assert (row["category"], row["task"], row["issues"]) == ("UNCATEGORIZED", "Sleep", ["missing_category"])
+    assert (row["category"], row["task"], row["issues"]) == ("UNCATEGORIZED", "Lunch break", ["missing_category"])
     assert segments["duration_min"].sum() == 60  # the time still counts
-    assert [item["title"] for item in report.title_issues["missing_category"]] == ["Sleep"]
+    assert [item["title"] for item in report.title_issues["missing_category"]] == ["Lunch break"]
+
+
+def test_title_that_is_just_a_category_counts_as_that_category():
+    ics = make_ics("UID:a\nDTSTART:20250902T000000Z\nDTEND:20250902T080000Z\nSUMMARY:sleep",
+                   "UID:b\nDTSTART:20250903T000000Z\nDTEND:20250903T070000Z\nSUMMARY:Sleep")
+
+    blocks, segments, report = run(ics, "UTC")
+
+    assert list(blocks["category"]) == ["SLEEP", "SLEEP"]
+    assert segments.loc[segments["category"] == "SLEEP", "duration_min"].sum() == 15 * 60
+    assert report.title_issues == {}
 
 
 def test_validation_report_groups_blocks_by_issue_code():

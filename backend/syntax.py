@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -18,6 +19,14 @@ TAG = re.compile(r"#([A-Za-z0-9_-]+)")
 PROJECT = re.compile(r"\+([A-Za-z0-9_-]+)")
 BRACKET = re.compile(r"\[([^\[\]\s]*)\]")   # any bracket word is a score attempt
 SCORE = re.compile(r"[1-5]")
+COLONS = ":\uff1a\ufe55"  # ASCII, full-width and small colon all separate the category
+
+
+def clean_name(text: str) -> str:
+    """Normalize a category name as typed: look-alike forms become ASCII (NFKC), invisible format characters
+    (zero-width space/joiners, byte-order mark) are dropped, whitespace is collapsed. Case is handled by callers."""
+    text = unicodedata.normalize("NFKC", text)
+    return " ".join("".join(ch for ch in text if unicodedata.category(ch) != "Cf").split())
 
 
 @dataclass
@@ -90,13 +99,20 @@ def _no_category(title: str, config: Config) -> ParsedTitle:
 def parse_title(title: str, config: Config) -> ParsedTitle:
     """Parse one event title against the configured categories, tags and separator."""
     title = title if isinstance(title, str) else ""
-    if ":" not in title:
+    split_at = min((i for i in (title.find(c) for c in COLONS) if i >= 0), default=-1)
+    if split_at < 0:
+        # A title that is just a category name ("Sleep", "sleep [4]") counts as that category.
+        tokens = _Tokens().add(title)
+        name = clean_name(" ".join(tokens.words)).upper()
+        if name and (name in config.categories or name in config.legacy_categories):
+            tokens.words = []
+            return _finish(name, tokens, [], config, needs_task=False)
         return _no_category(title, config)
 
-    prefix, body = title.split(":", 1)
+    prefix, body = clean_name(title[:split_at]), title[split_at + 1:]  # the task keeps its characters as typed
     issues = []
     tokens = _Tokens()
-    name = prefix.strip()
+    name = prefix
     if not CATEGORY_NAME.fullmatch(name):
         # Lenient rule: tokens typed before the category still count, with a warning.
         tokens.add(prefix)
@@ -106,8 +122,11 @@ def parse_title(title: str, config: Config) -> ParsedTitle:
         tokens.words = []
         issues.append("tokens_before_category")
     tokens.add(body)
+    return _finish(name.upper(), tokens, issues, config)
 
-    category = " ".join(name.split()).upper()
+
+def _finish(category: str, tokens: _Tokens, issues: list[str], config: Config, needs_task: bool = True) -> ParsedTitle:
+    """Apply category, score and tag rules to the extracted tokens."""
     if category in config.legacy_categories:
         rule = config.legacy_categories[category]
         issues.append("legacy_category")
@@ -126,7 +145,7 @@ def parse_title(title: str, config: Config) -> ParsedTitle:
         score = tokens.scores[0]
 
     task = " ".join(tokens.words)
-    if not task:
+    if not task and needs_task:
         issues.append("empty_task")
     if any(tag not in config.known_tags for tag in tokens.tags):
         issues.append("unknown_tag")

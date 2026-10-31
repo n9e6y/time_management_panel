@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 import yaml
 
 from ingest import WEEKDAYS, get_tz
-from syntax import CATEGORY_NAME
+from syntax import CATEGORY_NAME, clean_name
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 TAG_NAME = re.compile(r"[A-Za-z0-9_-]+")
@@ -95,10 +95,10 @@ def _categories(value, errors: list[str]) -> dict[str, CategoryConfig]:
     categories: dict[str, CategoryConfig] = {}
     used: set[int] = set()
     for name, settings in _mapping(value, "categories", errors).items():
-        if not isinstance(name, str) or not CATEGORY_NAME.fullmatch(name.strip()):
+        if not isinstance(name, str) or not CATEGORY_NAME.fullmatch(clean_name(name)):
             errors.append(f"categories: {name!r} is not a valid category name (letters, digits, '_', spaces)")
             continue
-        key = name.strip().upper()
+        key = clean_name(name).upper()
         if key in categories:
             errors.append(f"categories: {name!r} is listed twice")
         settings = _mapping(settings, f"categories.{key}", errors)
@@ -128,18 +128,18 @@ def _categories(value, errors: list[str]) -> dict[str, CategoryConfig]:
 def _legacy(value, categories: dict, errors: list[str]) -> dict[str, LegacyRule]:
     rules = {}
     for name, settings in _mapping(value, "legacy_categories", errors).items():
-        if not isinstance(name, str) or not CATEGORY_NAME.fullmatch(name.strip()):
+        if not isinstance(name, str) or not CATEGORY_NAME.fullmatch(clean_name(name)):
             errors.append(f"legacy_categories: {name!r} is not a valid category name")
             continue
-        key = name.strip().upper()
+        key = clean_name(name).upper()
         where = f"legacy_categories.{key}"
         if key in categories:
             errors.append(f"{where}: is also a current category; remove one of them")
         settings = _mapping(settings, where, errors)
         map_to = settings.get("map_to")
         if map_to is not None:
-            if isinstance(map_to, str) and map_to.strip().upper() in categories:
-                map_to = map_to.strip().upper()
+            if isinstance(map_to, str) and clean_name(map_to).upper() in categories:
+                map_to = clean_name(map_to).upper()
             else:
                 errors.append(f"{where}.map_to: {map_to!r} is not a configured category")
                 map_to = None

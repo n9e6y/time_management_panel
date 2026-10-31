@@ -194,3 +194,11 @@ def test_bad_or_duplicate_colors_are_rejected():
     text = error_text(with_changes(categories={"ME": {"color": 10}, "SLEEP": {"color": 1}, "JOB": {"color": 1}}))
 
     assert "categories.ME.color" in text and "categories.JOB.color: slot 1 is already used" in text
+
+
+def test_category_names_in_config_ignore_case_and_hidden_characters():
+    cfg = config.config_from_dict(with_changes(categories={"sle\u200cep": {}, "Me": {}},
+                                               legacy_categories={"urgent": {"map_to": "me"}}))
+
+    assert list(cfg.categories) == ["SLEEP", "ME"] and cfg.legacy_categories["URGENT"].map_to == "ME"
+

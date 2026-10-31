@@ -6,7 +6,7 @@ import {
   averageDay, categoryRows, dayProbability, periodDays, subcategoryRows, totals, weekdayHeatmap, UNLOGGED, type Ctx, type DayType,
   type Denominator,
 } from "../lib/aggregate";
-import { fmtHM, fmtHours, fmtPct } from "../lib/format";
+import { fmtHours, fmtPct } from "../lib/format";
 import type { Block } from "../lib/types";
 
 interface Props {
@@ -61,7 +61,7 @@ export default function Overview({ ctx, onShowBlocks, onUsePreset }: Props) {
     <>
       <div className="tiles">
         <StatTile label="Logged" value={t.loggedHours.toFixed(1)} unit="h" context={`${fmtPct(t.loggedHours / t.denominatorHours, 0)} of ${fmtHours(t.denominatorHours)} available`} />
-        <StatTile label="Average per day" value={fmtHM(t.avgPerDay)} unit="h" context={`over ${t.fullDays} calendar days`} />
+        <StatTile label="Average per day" value={t.avgPerDay.toFixed(1)} unit="h" context={`over ${t.fullDays} calendar days`} />
         <StatTile label="Focus sessions" value={String(t.focusSessions)} context={`blocks of ${settings.focus.min_minutes}+ min in focus categories`} />
         <StatTile label="Blocks" value={String(t.blocks)} context={`${t.skipped} skipped`} />
       </div>
