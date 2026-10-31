@@ -1,5 +1,6 @@
 """Layering rules: the core stays pure, web code stays in backend/api/ (CLAUDE.md engineering rules)."""
 import ast
+import subprocess
 from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parent.parent / "backend"
@@ -28,3 +29,17 @@ def test_core_modules_do_not_import_web_frameworks():
 def test_core_modules_do_not_import_the_api_layer():
     offenders = [p.name for p in BACKEND.glob("*.py") if "api" in imported_packages(p)]
     assert offenders == []
+
+
+def test_no_source_file_is_hidden_from_git():
+    """A broad .gitignore rule once swallowed frontend/src/lib/ (the whole calculation layer)."""
+    root = BACKEND.parent
+    sources = [p for pattern in ("backend/**/*.py", "frontend/src/**/*.ts", "frontend/src/**/*.tsx",
+                                 "frontend/src/**/*.css", "tests/**/*.py")
+               for p in root.glob(pattern) if "__pycache__" not in p.parts]
+    assert len(sources) > 30  # the globs still match the tree
+
+    rel = [str(p.relative_to(root)) for p in sources]
+    done = subprocess.run(["git", "check-ignore", "--stdin"], cwd=root, input="\n".join(rel),
+                          capture_output=True, text=True)
+    assert done.stdout.splitlines() == []

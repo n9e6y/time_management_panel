@@ -74,7 +74,11 @@ uvicorn api.main:app --app-dir backend --host 127.0.0.1 --port 8000
 cd frontend && npm run dev
 ```
 
-Open <http://127.0.0.1:5173>, choose your `.ics` file and pick a period. Reloading the page forgets the file.
+Open <http://127.0.0.1:5173> and choose your `.ics` file. It is saved on your computer only, in
+`~/.time-analyzer/` (`TIME_ANALYZER_HOME` moves the folder), so the next time you open the page the dashboard is
+already there. The top bar shows the file and when it was exported; from there you can replace it (or drop a new
+`.ics` anywhere on the page), restore the previous one, or remove it. Days after the export are shown as "not in
+this file", never as unlogged time.
 
 ### Backend API
 
@@ -86,8 +90,13 @@ curl -X POST "http://127.0.0.1:8000/api/analyze?period=this_week" \
 ```
 
 Periods: `1w 2w 1m 3m 6m 1y 2y 5y` (last N days), `this_week last_week this_month last_month this_year`
-(weeks follow your `week_start`), or `start=YYYY-MM-DD&end=YYYY-MM-DD`. `GET`/`PUT /api/config` read and save your
-settings (`PUT` rewrites `config.yaml`).
+(weeks follow your `week_start`), or `start=YYYY-MM-DD&end=YYYY-MM-DD`. Sent without a body, `/api/analyze` uses the
+saved calendar.
+
+`GET`/`PUT /api/config` read and save your settings (`PUT` rewrites `config.yaml`). The saved calendar is
+`GET /api/calendar` (its facts), `PUT /api/calendar?name=&data_as_of=` (raw body; parsed before it is saved),
+`POST /api/calendar/check` (compares a file with the saved one without saving it),
+`POST /api/calendar/restore` and `DELETE /api/calendar`.
 
 ### Command line
 
@@ -102,8 +111,9 @@ python backend/runner.py --ics_path my_calendar.ics --period this_month --out my
 Your calendar is personal data. `data/`, `*.ics` files (except the synthetic test fixture in
 `tests/fixtures/`), generated CSVs, `config.yaml` and secrets are listed in `.gitignore` and must never be committed.
 Everything runs locally; nothing is uploaded anywhere. The API only listens on `127.0.0.1` and only accepts
-requests from the local frontend (`TIME_ANALYZER_ORIGINS` changes the allowed origins). The calendar file is kept
-in memory and never written to disk.
+requests from the local frontend (`TIME_ANALYZER_ORIGINS` changes the allowed origins). The calendar you load is
+kept in `~/.time-analyzer/` — outside the repository, so it can never be committed — together with one previous
+copy for Undo. "Remove from this computer" deletes both. Nothing is uploaded anywhere.
 
 ## Development
 
@@ -124,6 +134,7 @@ Tests use only the synthetic calendar in `tests/fixtures/` (see `tests/fixtures/
 │   ├── config.py          # loads, validates and saves config.yaml
 │   ├── ingest.py          # calendar parsing core
 │   ├── periods.py         # date-range presets
+│   ├── store.py           # the calendar remembered in ~/.time-analyzer/
 │   ├── syntax.py          # event title grammar
 │   └── runner.py          # command-line tool
 ├── frontend/
