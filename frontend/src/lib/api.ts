@@ -1,6 +1,7 @@
 // Calls to the local backend. In development Vite forwards /api to 127.0.0.1:8000.
 import type {
-  Analysis, CalendarCheck, CalendarState, Period, PeriodPreset, Settings, SettingsResponse,
+  Analysis, CalendarCheck, CalendarState, Goal, GoalsProgress, GoalsResponse, Period, PeriodPreset, Settings,
+  SettingsResponse,
 } from "./types";
 
 export class ApiError extends Error {
@@ -86,3 +87,15 @@ export const saveSettings = (settings: Settings) =>
   });
 
 export const getPeriods = () => request<{ presets: PeriodPreset[]; default: string }>("/api/periods");
+
+export const getGoals = () => request<GoalsResponse>("/api/goals");
+
+export const saveGoals = (goals: Goal[]) =>
+  request<GoalsResponse>("/api/goals", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ goals }),
+  });
+
+/** Every goal measured over the week and month happening now, whatever period the page shows. */
+export const getGoalProgress = (signal?: AbortSignal) => request<GoalsProgress>("/api/goals/progress", { signal });

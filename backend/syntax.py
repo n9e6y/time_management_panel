@@ -1,6 +1,6 @@
 """Event title grammar: ``CATEGORY: task #tag +project [score]``.
 
-Pure functions only; ``parse_title`` never raises on user text. Spec and test table: c-c-k/docs/SYNTAX_SPEC.md.
+Pure functions only; ``parse_title`` never raises on user text. The grammar is documented in docs/SYNTAX.md.
 Tokens are whole whitespace-separated words, so ``C#``, ``C++`` and ``e-mail`` stay part of the task.
 """
 from __future__ import annotations

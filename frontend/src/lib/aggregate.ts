@@ -1,5 +1,5 @@
 // Turns an analysis into the numbers each chart shows. Pure functions; definitions follow
-// c-c-k/docs/design_mock/ux/IA.md §6 and the owner decisions in §10.
+// the project's design notes; every number a chart shows is computed here and tested.
 import type { Analysis, Segment, Settings } from "./types";
 import {
   addDays, addMonths, dayLengthHours, daysBetween, endOfMonth, minutesOfDay, startOfMonth, weekStartOf,

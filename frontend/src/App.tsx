@@ -8,15 +8,15 @@ import Rhythm from "./pages/Rhythm";
 import SettingsPage from "./pages/Settings";
 import Welcome from "./pages/Welcome";
 import {
-  analyze, ApiError, checkCalendar, getCalendar, getPeriods, getSettings, pickFile, removeCalendar, restoreCalendar,
-  saveCalendar, saveSettings, type PickedFile,
+  analyze, ApiError, checkCalendar, getCalendar, getGoalProgress, getGoals, getPeriods, getSettings, pickFile,
+  removeCalendar, restoreCalendar, saveCalendar, saveGoals, saveSettings, type PickedFile,
 } from "./lib/api";
 import { previousRange, totals, type Ctx } from "./lib/aggregate";
 import { fmtDay, fmtRange } from "./lib/format";
 import { useRoute, type Page } from "./lib/router";
 import { todayIn } from "./lib/time";
 import type {
-  Analysis, Block, CalendarCheck, CalendarState, Period, PeriodPreset, Settings,
+  Analysis, Block, CalendarCheck, CalendarState, Goal, GoalsProgress, Period, PeriodPreset, Settings,
 } from "./lib/types";
 
 function periodFromUrl(): Period {
@@ -48,6 +48,9 @@ export default function App() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [previous, setPrevious] = useState<Analysis | null>(null);
   const [noPrevious, setNoPrevious] = useState<string | null>(null);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [goalsPath, setGoalsPath] = useState("");
+  const [goalProgress, setGoalProgress] = useState<GoalsProgress | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "updating">("idle");
   const [error, setError] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<{ title: string; blocks: Block[] } | null>(null);
@@ -85,14 +88,26 @@ export default function App() {
     if (inFlight.current === controller) setStatus("idle");
   }, []);
 
+  const refreshGoals = useCallback(async (hasCalendar: boolean) => {
+    try {
+      const saved = await getGoals();
+      setGoals(saved.goals);
+      setGoalsPath(saved.path);
+      setGoalProgress(hasCalendar ? await getGoalProgress() : null);
+    } catch {
+      setGoalProgress(null);  // goals are a bonus on the page: never block the dashboard
+    }
+  }, []);
+
   useEffect(() => {
     Promise.all([getSettings(), getPeriods(), getCalendar()])
       .then(([s, p, c]) => {
         setSettings(s.settings); setSource(s.source); setPresets(p.presets); setCalendar(c);
         if (c.calendar) run(periodFromUrl(), false);  // returning user: straight to the dashboard
+        refreshGoals(!!c.calendar);
       })
       .catch((e: ApiError) => setError(e.message));
-  }, [run]);
+  }, [run, refreshGoals]);
 
   useEffect(() => {
     if (!toast) return;
@@ -108,6 +123,7 @@ export default function App() {
       setCalendar(await saveCalendar(await pickFile(f)));
       setError(null);
       setWelcomeStep(2);
+      await refreshGoals(true);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -120,6 +136,7 @@ export default function App() {
       setCalendar(await saveCalendar(file));
       setToast({ message: `Loaded ${file.name}.`, undo: true });
       await run(period, true);
+      await refreshGoals(true);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -140,6 +157,7 @@ export default function App() {
     setToast(null);
     setCalendar(await restoreCalendar());
     await run(period, true);
+    await refreshGoals(true);
   };
 
   const remove = async () => {
@@ -147,6 +165,7 @@ export default function App() {
     setCalendar(await removeCalendar());
     setAnalysis(null);
     setPrevious(null);
+    setGoalProgress(null);
     setWelcomeStep(1);
     setPage("overview");
   };
@@ -178,12 +197,26 @@ export default function App() {
     if (calendar?.calendar) run(next, true);
   };
 
+  const onSaveGoals = async (next: Goal[]): Promise<string[] | null> => {
+    try {
+      const saved = await saveGoals(next);
+      setGoals(saved.goals);
+      setGoalsPath(saved.path);
+      setGoalProgress(calendar?.calendar ? await getGoalProgress() : null);
+      return null;
+    } catch (e) {
+      const err = e as ApiError;
+      return err.problems?.length ? err.problems : [err.message];
+    }
+  };
+
   const onSaveSettings = async (next: Settings): Promise<string[] | null> => {
     try {
       const saved = await saveSettings(next);
       setSettings(saved.settings);
       setSource(saved.source);
       if (calendar?.calendar) await run(period, true);
+      await refreshGoals(!!calendar?.calendar);  // week_start and categories change how goals are judged
       return null;
     } catch (e) {
       const err = e as ApiError;
@@ -213,7 +246,7 @@ export default function App() {
   if (!settings && !error) return <main className="faint">Connecting to the Time Analyzer server…</main>;
   if (!hasCalendar || (welcomeStep === 2 && !analysis)) {
     if (page === "settings" && settings) {
-      return <><TopBar page={page} setPage={setPage} hasData={false} issues={0} /><main><SettingsPage settings={settings} source={source} onSave={onSaveSettings} /></main></>;
+      return <><TopBar page={page} setPage={setPage} hasData={false} issues={0} /><main><SettingsPage settings={settings} source={source} onSave={onSaveSettings} goals={goals} goalsPath={goalsPath} onSaveGoals={onSaveGoals} /></main></>;
     }
     return <Welcome step={hasCalendar ? 2 : 1} settings={settings} folder={calendar?.folder ?? ""} loading={status === "loading" ? "your calendar" : null}
       error={error} onFile={firstLoad} onConfirm={confirmWeek} />;
@@ -234,12 +267,13 @@ export default function App() {
           <main className={status === "updating" ? "updating" : ""}>
             {error && <div className="notice error" role="alert">{error}</div>}
             {page === "overview" && <Overview ctx={ctx} previous={previousCtx} noPrevious={noPrevious}
+              goals={goalProgress} onOpenSettings={() => setPage("settings")}
               onShowBlocks={(title, blocks) => setDrawer({ title, blocks })}
               onUsePreset={(p) => { setCustomOpen(false); choosePeriod({ preset: p }); }} />}
             {page === "rhythm" && <Rhythm ctx={ctx} onShowBlocks={(title, blocks) => setDrawer({ title, blocks })}
               onUsePreset={(p) => { setCustomOpen(false); choosePeriod({ preset: p }); }} />}
             {page === "quality" && <DataQuality ctx={ctx} onOpenSettings={() => setPage("settings")} />}
-            {page === "settings" && <SettingsPage settings={settings!} source={source} onSave={onSaveSettings} />}
+            {page === "settings" && <SettingsPage settings={settings!} source={source} onSave={onSaveSettings} goals={goals} goalsPath={goalsPath} onSaveGoals={onSaveGoals} />}
           </main>
         </>
       ) : (

@@ -1,6 +1,6 @@
 """Load and validate the settings file (config.yaml, or config.example.yaml as a fallback).
 
-Pure apart from reading and writing the file: no web framework. Spec: c-c-k/docs/stages/STAGE_2_syntax_and_config.md.
+Pure apart from reading and writing the file: no web framework.
 Every problem in a config is collected and reported at once, so one run shows everything to fix.
 """
 from __future__ import annotations

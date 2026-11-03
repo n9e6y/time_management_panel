@@ -1,4 +1,4 @@
-"""Stage 3 Part A: the FastAPI backend (spec: c-c-k/docs/stages/STAGE_3_app_architecture.md)."""
+"""The FastAPI backend: routes, limits, the saved calendar, goals and serving the built frontend."""
 import builtins
 import io
 import os
@@ -289,3 +289,144 @@ def test_saving_writes_only_inside_the_personal_folder(client, private_data_home
 
     assert (private_data_home / "calendar" / "current.ics").read_bytes() == FIXTURE_ICS
     assert repo_files() == before
+
+
+# --- Stage 4: goals ----------------------------------------------------------------------------
+
+LEARN_WEEKLY = {"goals": [{"id": "learn", "scope": "LEARN", "every": "week", "type": "floor", "hours": 10}]}
+
+
+def test_no_goals_at_first(client, private_data_home):
+    body = client.get("/api/goals").json()
+
+    assert body["goals"] == []
+    assert body["path"] == str(private_data_home / "goals.yaml")
+
+
+def test_goals_are_saved_outside_the_repository_and_read_back(client, private_data_home, root):
+    res = client.put("/api/goals", json=LEARN_WEEKLY)
+
+    assert res.status_code == 200
+    assert res.json()["goals"] == [{"id": "learn", "scope": "LEARN", "every": "week", "type": "floor", "hours": 10.0}]
+    assert (private_data_home / "goals.yaml").exists()
+    assert not list(root.glob("goals.yaml"))  # nothing personal inside the project
+    assert client.get("/api/goals").json()["goals"][0]["id"] == "learn"
+
+
+def test_goals_that_cannot_be_saved_list_every_problem(client):
+    res = client.put("/api/goals", json={"goals": [{"scope": "NOPE", "every": "never", "type": "floor"}]})
+
+    assert res.status_code == 422
+    detail = res.json()["detail"]
+    assert detail["message"] == "These goals can't be saved."
+    assert any("not one of your categories" in p for p in detail["problems"])
+
+
+def test_progress_is_empty_without_goals_or_without_a_calendar(client):
+    empty = client.get("/api/goals/progress").json()
+    assert empty["goals"] == [] and empty["as_of"] == "2025-09-08"
+
+    client.put("/api/goals", json=LEARN_WEEKLY)
+    assert client.get("/api/goals/progress").json()["goals"] == []  # goals, but no calendar yet
+
+
+def test_progress_measures_the_running_week_of_the_saved_calendar(client):
+    save(client)
+    client.put("/api/goals", json=LEARN_WEEKLY)
+
+    body = client.get("/api/goals/progress").json()
+
+    assert body["as_of"] == "2025-09-08"  # the file was exported the same day
+    [learn] = body["goals"]
+    # The fixture's week starts Saturday 6 Sep; LEARN is logged on 2 Sep, in the week before.
+    assert (learn["first_day"], learn["last_day"]) == ("2025-09-06", "2025-09-12")
+    assert learn["actual"] == 0.0 and learn["running"] is True
+    assert learn["status"] == "behind"
+    assert learn["expected"] == pytest.approx(10 * 3 / 7, abs=1e-3)
+
+
+def test_progress_follows_the_week_start_from_settings(client, root):
+    save(client)
+    client.put("/api/goals", json=LEARN_WEEKLY)
+    settings = yaml.safe_load((root / "config.example.yaml").read_text())
+    client.put("/api/config", json={**settings, "week_start": "Monday"})
+
+    [learn] = client.get("/api/goals/progress").json()["goals"]
+
+    assert (learn["first_day"], learn["last_day"]) == ("2025-09-08", "2025-09-14")
+
+
+def test_progress_counts_a_monthly_goal_over_the_calendar_month(client):
+    save(client)
+    client.put("/api/goals", json={"goals": [
+        {"id": "learn-month", "scope": "LEARN", "every": "month", "type": "floor", "hours": 6}]})
+
+    [learn] = client.get("/api/goals/progress").json()["goals"]
+
+    assert (learn["first_day"], learn["last_day"]) == ("2025-09-01", "2025-09-30")
+    assert learn["actual"] == 2.0  # the one LEARN block in the fixture, on 2 Sep
+    assert learn["expected"] == pytest.approx(6 * 8 / 30, abs=1e-3)  # 8 of September's 30 days are over
+    assert learn["status"] == "on_pace"
+
+
+def test_a_stale_export_is_judged_up_to_its_own_day_not_today(root):
+    client = TestClient(create_app(root=root, today=lambda tz: date(2025, 9, 30)))
+    save(client)  # exported 8 Sep
+    client.put("/api/goals", json={"goals": [
+        {"id": "learn-month", "scope": "LEARN", "every": "month", "type": "floor", "hours": 8}]})
+
+    body = client.get("/api/goals/progress").json()
+
+    assert (body["today"], body["as_of"]) == ("2025-09-30", "2025-09-08")
+    assert body["goals"][0]["running"] is True  # September is not over as far as this file knows
+
+
+# --- serving the built frontend ----------------------------------------------------------------
+
+@pytest.fixture
+def built(root) -> Path:
+    """A root that also holds a built frontend, as `npm run build` leaves it."""
+    dist = root / "frontend" / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<!doctype html><title>Time Analyzer</title><div id=root></div>")
+    (dist / "assets" / "index-abc.js").write_text("console.log('app')")
+    (dist / "favicon.svg").write_text("<svg/>")
+    return dist
+
+
+def test_without_a_built_frontend_only_the_api_is_served(client):
+    assert client.get("/api/health").status_code == 200
+    assert client.get("/").status_code == 404
+
+
+def test_the_built_frontend_is_served_from_the_same_server(built, root):
+    client = TestClient(create_app(root=root, today=lambda tz: date(2025, 9, 8)))
+
+    assert "Time Analyzer" in client.get("/").text
+    assert client.get("/assets/index-abc.js").text == "console.log('app')"
+    assert client.get("/favicon.svg").text == "<svg/>"
+
+
+def test_every_page_path_reloads_into_the_app(built, root):
+    client = TestClient(create_app(root=root, today=lambda tz: date(2025, 9, 8)))
+
+    for path in ("/overview", "/rhythm", "/data-quality", "/settings", "/anything-else"):
+        res = client.get(path)
+        assert res.status_code == 200 and "id=root" in res.text, path
+
+
+def test_the_api_still_wins_and_unknown_api_routes_stay_errors(built, root):
+    client = TestClient(create_app(root=root, today=lambda tz: date(2025, 9, 8)))
+
+    assert client.get("/api/health").json() == {"status": "ok"}
+    assert client.get("/api/nope").status_code == 404
+    assert "id=root" not in client.get("/api/nope").text
+
+
+def test_a_path_cannot_escape_the_built_folder(built, root):
+    client = TestClient(create_app(root=root, today=lambda tz: date(2025, 9, 8)))
+    (root / "config.example.yaml").exists()
+
+    res = client.get("/../config.example.yaml")
+
+    assert "timezone" not in res.text  # the config is never served; the app page is

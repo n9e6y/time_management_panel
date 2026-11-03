@@ -1,4 +1,4 @@
-"""Stage 2 config tests (spec: c-c-k/docs/stages/STAGE_2_syntax_and_config.md)."""
+"""config.yaml: loading, validation and saving."""
 from pathlib import Path
 
 import pytest

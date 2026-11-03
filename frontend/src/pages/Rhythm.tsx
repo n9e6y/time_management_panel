@@ -102,7 +102,7 @@ export default function Rhythm({ ctx, onShowBlocks, onUsePreset }: Props) {
           caption={"notEnough" in nights ? undefined
             : `Each row is the night that starts on that date, 18:00 to 18:00. Only ${nights.category} blocks; naps are drawn thin.`
               + ` ${nights.withSleep} nights with sleep${nights.empty.length ? `, ${nights.empty.length} complete night(s) with none (${nights.empty.map(fmtDay).join(", ")})` : ""}.`
-              + " Bedtime and wake are the night's first start and last end, approximate until the main-sleep rule (Stage 5)."}>
+              + " Bedtime and wake are the night's first sleep start and last sleep end, so a late nap moves them."}>
           {r4 && !("notEnough" in nights) ? (
             <>
               <div className="scroll"><div style={{ minWidth: 520 }}>
@@ -111,12 +111,15 @@ export default function Rhythm({ ctx, onShowBlocks, onUsePreset }: Props) {
               </div></div>
               <div className="tiles four">
                 <StatTile label="Median bedtime" value={clock(nights.medians.bedtime)}
-                  context={nights.medians.bedtimeDayOff === null ? undefined : `days off ${clock(nights.medians.bedtimeDayOff)}`} />
+                  context={nights.medians.bedtimeWorkday === null ? undefined : `workdays ${clock(nights.medians.bedtimeWorkday)}`}
+                  previous={nights.medians.bedtimeDayOff === null ? undefined : `days off ${clock(nights.medians.bedtimeDayOff)}`}
+                  previousPrefix={false} />
                 <StatTile label="Median wake" value={clock(nights.medians.wake)}
-                  context={nights.medians.wakeDayOff === null ? undefined : `days off ${clock(nights.medians.wakeDayOff)}`} />
+                  context={nights.medians.wakeWorkday === null ? undefined : `workdays ${clock(nights.medians.wakeWorkday)}`}
+                  previous={nights.medians.wakeDayOff === null ? undefined : `days off ${clock(nights.medians.wakeDayOff)}`}
+                  previousPrefix={false} />
                 <StatTile label="Median sleep" value={nights.medians.hours === null ? "—" : nights.medians.hours.toFixed(1)}
                   unit={nights.medians.hours === null ? undefined : "h"} context="per complete night" />
-                <StatTile label="Bedtime spread" value="—" context="Stage 5 (standard deviation)" />
               </div>
             </>
           ) : (

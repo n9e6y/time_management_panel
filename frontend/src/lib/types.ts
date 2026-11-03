@@ -121,3 +121,63 @@ export interface CalendarCheck {
   warnings: CalendarWarning[];
 }
 
+
+// --- goals (Stage 4) ---------------------------------------------------------------------------
+
+export type GoalEvery = "week" | "month";
+export type GoalType = "floor" | "cap" | "range" | "fixed";
+
+/** One goal as stored in goals.yaml. */
+export interface Goal {
+  id: string;
+  /** A category ("LEARN") or a sub-category ("ME: scrolling"). */
+  scope: string;
+  every: GoalEvery;
+  type: GoalType;
+  hours?: number | null;
+  min?: number | null;
+  max?: number | null;
+  tolerance?: number;
+  why?: string;
+}
+
+export type GoalStatus =
+  | "met" | "close" | "missed"            // floor, finished period
+  | "within" | "over"                     // cap, finished period
+  | "in_range" | "below" | "above"        // range, finished period
+  | "on_pace" | "behind" | "heading_over" // any type, running period
+  | "logged";                             // fixed: never judged on hours
+
+/** A goal measured over the week or month happening now (GET /api/goals/progress). */
+export interface GoalProgress extends Goal {
+  label: string;
+  first_day: string;
+  last_day: string;
+  running: boolean;
+  elapsed: number;
+  actual: number;
+  /** Part of `actual` that comes from titles split on " - ". */
+  estimated: number;
+  blocks: number;
+  coverage: number;
+  low_coverage: boolean;
+  status: GoalStatus;
+  expected: number | null;
+  expected_min: number | null;
+  expected_max: number | null;
+  gap: number;
+  projected: number | null;
+}
+
+export interface GoalsResponse {
+  goals: Goal[];
+  path: string;
+}
+
+export interface GoalsProgress {
+  goals: GoalProgress[];
+  /** Last day with real data: today, or the calendar's export day when that is earlier. */
+  as_of: string;
+  today: string;
+  path: string;
+}

@@ -1,6 +1,6 @@
 """Regression tests for the CSV that the app reads, on the synthetic fixture.
 
-These started as expected failures in Stage 0 (IDs refer to c-c-k/docs/CODE_REVIEW.md) and became
+These started as expected failures for known parser bugs and became
 real tests when Stage 1 fixed the parser.
 """
 import pandas as pd

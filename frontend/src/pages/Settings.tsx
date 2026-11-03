@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import GoalsEditor from "../components/GoalsEditor";
 import { WEEKDAYS } from "../lib/time";
-import type { Settings as SettingsT } from "../lib/types";
+import type { Goal, Settings as SettingsT } from "../lib/types";
 
 const SLOTS = 9;
 
@@ -8,10 +9,13 @@ interface Props {
   settings: SettingsT;
   source: string;
   onSave: (settings: SettingsT) => Promise<string[] | null>;  // problems, or null when saved
+  goals: Goal[];
+  goalsPath: string;
+  onSaveGoals: (goals: Goal[]) => Promise<string[] | null>;
 }
 
 /** Edit config.yaml through the API. Saving re-runs the analysis when a file is loaded. */
-export default function Settings({ settings, source, onSave }: Props) {
+export default function Settings({ settings, source, onSave, goals, goalsPath, onSaveGoals }: Props) {
   const [draft, setDraft] = useState<SettingsT>(structuredClone(settings));
   const [problems, setProblems] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
@@ -110,6 +114,8 @@ export default function Settings({ settings, source, onSave }: Props) {
         <input id="tags" className="input" style={{ width: "100%" }} value={draft.tags.known.join(", ")} onChange={(e) => update({ tags: { known: e.target.value.split(",").map((t) => t.trim()).filter(Boolean) } })} />
         <div className="hint">Comma separated, without #. Other tags are allowed but listed on Data quality.</div>
       </div>
+      <GoalsEditor goals={goals} path={goalsPath} settings={draft} onSave={onSaveGoals} />
+
       <div className="field">
         <label>Old categories</label>
         <div className="hint">{Object.entries(draft.legacy_categories).map(([n, r]) => `${n} → ${r.map_to ?? "own group"}${r.add_tags.length ? ` (+#${r.add_tags.join(" #")})` : ""}`).join(" · ") || "None"}. Edit in config.yaml.</div>

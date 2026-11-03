@@ -18,8 +18,11 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 import config
+import goals as goals_module
 import ingest
 import periods
 import store
@@ -43,7 +46,9 @@ def create_app(root: Path = config.ROOT_DIR, today: Callable[[ZoneInfo], date] =
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST", "PUT", "DELETE"],
                        allow_headers=["Content-Type"], expose_headers=["X-Analysis-Cache"])
     cache = AnalysisCache()
-    calendars = store.CalendarStore(home or store.data_home())
+    data_home = home or store.data_home()
+    calendars = store.CalendarStore(data_home)
+    goals_file = data_home / goals_module.GOALS_FILE
 
     def load_settings() -> config.Config:
         try:
@@ -75,6 +80,58 @@ def create_app(root: Path = config.ROOT_DIR, today: Callable[[ZoneInfo], date] =
             raise HTTPException(422, {"message": "These settings can't be saved.", "problems": _problems(exc)})
         config.save_config(cfg, target)
         return settings_response(cfg)
+
+    def load_goals() -> list[goals_module.Goal]:
+        try:
+            return goals_module.load_goals(goals_file, load_settings())
+        except goals_module.GoalsError as exc:
+            raise HTTPException(422, {"message": "The goals file has problems.", "problems": _problems(exc)})
+
+    @app.get("/api/goals")
+    def get_goals() -> dict:
+        return {"goals": goals_module.goals_to_dict(load_goals())["goals"], "path": str(goals_file)}
+
+    @app.put("/api/goals")
+    def put_goals(body: dict) -> dict:
+        try:
+            saved = goals_module.goals_from_dict(body, load_settings(), source=str(goals_file))
+        except goals_module.GoalsError as exc:
+            raise HTTPException(422, {"message": "These goals can't be saved.", "problems": _problems(exc)})
+        goals_module.save_goals(saved, goals_file)
+        return {"goals": goals_module.goals_to_dict(saved)["goals"], "path": str(goals_file)}
+
+    @app.get("/api/goals/progress")
+    async def goals_progress() -> dict:
+        """Every goal measured over the week and the month happening now (the Overview goal card).
+
+        "Now" is the calendar's export day when that is before today, so a stale file is not read as a bad week.
+        """
+        wanted = load_goals()
+        cfg = load_settings()
+        today_local = today(cfg.tz)
+        info = calendars.info()
+        as_of = today_local
+        if info and info.data_as_of:
+            exported = datetime.fromisoformat(info.data_as_of).astimezone(cfg.tz).date()
+            as_of = min(as_of, exported)
+        payload = {"as_of": as_of.isoformat(), "today": today_local.isoformat(), "path": str(goals_file),
+                   "goals": []}
+        body = calendars.read()
+        if not wanted or not body:
+            return payload
+
+        spans = [goals_module.period_of(as_of, every, cfg) for every in {g.every for g in wanted}]
+        first_day = min(span[0] for span in spans)
+        last_day = max(span[1] for span in spans)
+        try:
+            _blocks, segments, _report = await run_in_threadpool(ingest.analyze, body, first_day, last_day, cfg)
+        except Exception:  # never echo the calendar's content back
+            raise HTTPException(400, "Could not read the saved calendar file.")
+        measured = goals_module.evaluate(wanted, segments, cfg, as_of)
+        payload["goals"] = [goals_module.progress_to_dict(item) for item in measured]
+        return payload
+
+    _serve_frontend(app, root / "frontend" / "dist")
 
     def calendar_response() -> dict:
         info = calendars.info()
@@ -147,6 +204,33 @@ def create_app(root: Path = config.ROOT_DIR, today: Callable[[ZoneInfo], date] =
         return payload
 
     return app
+
+
+def _serve_frontend(app: FastAPI, dist: Path) -> None:
+    """Serve ``npm run build``'s output, so the whole app is one command and needs no Node.
+
+    Nothing is mounted when the folder is missing: the Vite dev server covers development, and the API alone is
+    valid. Every path that is not a file falls back to index.html, because the pages live in the path
+    (/overview, /rhythm, ...) and a reload must still reach the app.
+    """
+    if not dist.is_dir():
+        return
+    index = dist / "index.html"
+    if (dist / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+
+    @app.get("/", include_in_schema=False)
+    def home() -> FileResponse:
+        return FileResponse(index)
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def page(path: str) -> FileResponse:
+        if path.startswith("api/"):  # an unknown API route is an error, not a page
+            raise HTTPException(404, "Not found.")
+        wanted = (dist / path).resolve()
+        if wanted.is_file() and wanted.is_relative_to(dist.resolve()):
+            return FileResponse(wanted)
+        return FileResponse(index)
 
 
 async def _read_body(request: Request, limit: int, required: bool = True) -> bytes:

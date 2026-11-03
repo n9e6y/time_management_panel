@@ -1,6 +1,6 @@
 """Turn an ICS calendar into correct time blocks and per-day segments.
 
-Pure functions only: no web framework, no file writing. Specs: c-c-k/docs/stages/STAGE_1_parser_correctness.md
+Pure functions only: no web framework, no file writing. The title grammar is documented in docs/SYNTAX.md
 and STAGE_2_syntax_and_config.md.
 
 Pipeline: load_calendar -> expand_instances -> build_blocks -> split_parts -> split_segments

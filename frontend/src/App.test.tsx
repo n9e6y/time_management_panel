@@ -14,10 +14,13 @@ const INFO: CalendarInfo = {
 };
 const saved = (info: CalendarInfo | null, has_previous = false): CalendarState => ({ calendar: info, has_previous, folder: "/home/me/.time-analyzer/calendar" });
 
+const GOALS_PATH = "/home/me/.time-analyzer/goals.yaml";
 let calls: { url: string; init?: RequestInit }[] = [];
+let goalList: unknown[] = [];
 
 function mockServer(start: CalendarState, overrides: Record<string, () => Promise<Response>> = {}) {
   calls = [];
+  goalList = [];
   let state = start;
   vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
     calls.push({ url, init });
@@ -36,6 +39,10 @@ function mockServer(start: CalendarState, overrides: Record<string, () => Promis
       case "POST /api/calendar/restore": state = saved(INFO, true); return json(state);
       case "DELETE /api/calendar": state = saved(null); return json(state);
       case "POST /api/analyze": return json(fixtureAnalysis);
+      case "GET /api/goals": return json({ goals: goalList, path: GOALS_PATH });
+      case "PUT /api/goals": return json({ goals: goalList, path: GOALS_PATH });
+      case "GET /api/goals/progress":
+        return json({ goals: [], as_of: "2025-09-08", today: "2025-09-08", path: GOALS_PATH });
     }
     return json({ detail: "not found" }, 404);
   }));
@@ -239,5 +246,109 @@ describe("the previous period (Stage 3.5 Part B)", () => {
 
     expect(posts("/api/analyze")).toHaveLength(1);  // nothing to compare: no second call
     expect(screen.getByText(/No previous period: your calendar starts on Mon 1 Sep/)).toBeInTheDocument();
+  });
+});
+
+describe("goals (Stage 4)", () => {
+  const WEEKLY = {
+    id: "learn", scope: "LEARN", every: "week", type: "floor", hours: 10, tolerance: 0.1, label: "≥ 10 h",
+    first_day: "2025-09-06", last_day: "2025-09-12", running: true, elapsed: 3 / 7, actual: 2, estimated: 0,
+    blocks: 1, coverage: 0.8, low_coverage: false, status: "behind", expected: 4.29, expected_min: null,
+    expected_max: null, gap: 8, projected: 4.67,
+  };
+
+  const withGoals = (goals: unknown[]) => ({
+    "GET /api/goals/progress": () =>
+      json({ goals, as_of: "2025-09-08", today: "2025-09-08", path: GOALS_PATH }),
+  });
+
+  it("invites the first goal when there are none", async () => {
+    await returningUser();
+
+    expect(screen.getByText("Is my time going where I want?")).toBeInTheDocument();
+    expect(screen.getByText(/No goals yet\./)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add a goal" })).toBeInTheDocument();
+  });
+
+  it("shows a goal's progress, its status and what it would take", async () => {
+    mockServer(saved(INFO), withGoals([WEEKLY]));
+    render(<App />);
+    await screen.findByText("Where did my time go, and what grew or shrank?");
+
+    expect(await screen.findByText("0 of 1 goals on pace · 1 behind.")).toBeInTheDocument();
+    const card = screen.getByLabelText("Is my time going where I want?");
+    expect(within(card).getByText("LEARN")).toBeInTheDocument();
+    expect(within(card).getByText("≥ 10 h")).toBeInTheDocument();
+    expect(within(card).getByText("Behind pace")).toBeInTheDocument();
+    expect(within(card).getByText(/needs 8.0.h more by Fri 12 Sep/)).toBeInTheDocument();
+    expect(within(card).getByText(/as of Mon 8 Sep/)).toBeInTheDocument();
+  });
+
+  it("opens the blocks behind a goal", async () => {
+    mockServer(saved(INFO), withGoals([WEEKLY]));
+    render(<App />);
+    const card = await screen.findByLabelText("Is my time going where I want?");
+
+    fireEvent.click(within(card).getByRole("button", { name: /2.0.h/ }));
+
+    const drawer = await screen.findByRole("dialog");
+    expect(within(drawer).getByText(/Blocks counting toward LEARN/)).toBeInTheDocument();
+    expect(within(drawer).getByText(/calculus ch.4/)).toBeInTheDocument();
+  });
+
+  it("says a fixed goal is never judged on hours", async () => {
+    mockServer(saved(INFO), withGoals([{
+      ...WEEKLY, id: "class", scope: "CLASS", type: "fixed", hours: null, label: "fixed", status: "logged",
+      actual: 17, blocks: 9, gap: 0, expected: null, projected: null,
+    }]));
+    render(<App />);
+    const card = await screen.findByLabelText("Is my time going where I want?");
+
+    expect(within(card).getByText("Logged")).toBeInTheDocument();
+    expect(within(card).getByText(/17.0.h in 9 blocks · not judged on hours/)).toBeInTheDocument();
+  });
+
+  it("adds a goal from Settings and sends it to the backend", async () => {
+    await returningUser();
+    fireEvent.click(screen.getByRole("button", { name: "Add a goal" }));
+    await screen.findByText("Settings");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add a goal" }));
+    fireEvent.change(screen.getByLabelText("Hours"), { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save goals" }));
+
+    await waitFor(() => expect(calls.some((c) => c.init?.method === "PUT" && c.url === "/api/goals")).toBe(true));
+    const put = calls.find((c) => c.init?.method === "PUT" && c.url === "/api/goals")!;
+    expect(JSON.parse(put.init!.body as string)).toEqual({
+      goals: [{ id: "sleep-week", scope: "SLEEP", every: "week", type: "floor", hours: 12 }],
+    });
+  });
+
+  it("lists every problem when goals can't be saved, and keeps the form", async () => {
+    mockServer(saved(INFO), {
+      "PUT /api/goals": () => json({ detail: { message: "These goals can't be saved.", problems: ["goals[0].hours: expected a number of hours >= 0, got -1"] } }, 422),
+    });
+    render(<App />);
+    await screen.findByText("Where did my time go, and what grew or shrank?");
+    fireEvent.click(screen.getByRole("button", { name: "Add a goal" }));
+    await screen.findByText("Settings");
+    fireEvent.click(screen.getByRole("button", { name: "Add a goal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save goals" }));
+
+    expect(await screen.findByText(/expected a number of hours/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Hours")).toBeInTheDocument();
+  });
+
+  it("re-reads goals after settings change, since week_start changes how they are judged", async () => {
+    mockServer(saved(INFO), { "PUT /api/config": () => json({ ...fixtureConfig, source: "config.yaml" }) });
+    render(<App />);
+    await screen.findByText("Where did my time go, and what grew or shrank?");
+    const before = calls.filter((c) => c.url === "/api/goals/progress").length;
+
+    fireEvent.click(screen.getByLabelText("Settings"));
+    fireEvent.click(screen.getByLabelText("Saturday"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(calls.filter((c) => c.url === "/api/goals/progress").length).toBeGreaterThan(before));
   });
 });

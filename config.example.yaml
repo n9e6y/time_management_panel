@@ -1,5 +1,5 @@
 # Time Analyzer settings. Copy this file to config.yaml (gitignored) and edit your copy.
-# Title grammar: c-c-k/docs/SYNTAX_SPEC.md (CATEGORY: task #tag +project [score]).
+# Title grammar: docs/SYNTAX.md (CATEGORY: task #tag +project [score]).
 
 timezone: Asia/Tehran            # IANA name; set to where you live
 week_start: Saturday             # any weekday; weekly totals and targets follow it

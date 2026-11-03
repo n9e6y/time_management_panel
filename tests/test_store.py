@@ -1,4 +1,4 @@
-"""Stage 3.5 Part A: the calendar saved on this computer (spec: c-c-k/docs/stages/STAGE_3_5_remember_and_views.md)."""
+"""The calendar remembered on this computer: its facts, one previous copy, and the wrong-file guard."""
 from pathlib import Path
 
 import pytest

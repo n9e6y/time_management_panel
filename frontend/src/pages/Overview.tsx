@@ -1,13 +1,15 @@
 import { useCallback, useMemo, useState } from "react";
 import Chart from "../components/Chart";
+import GoalRows from "../components/GoalRows";
 import { Card, MixBar, NotEnoughData, StatTile } from "../components/ui";
 import { categoryBars, mixBars, subcategoryBars } from "../charts/options";
 import {
   categoryRows, mixOverTime, periodDays, projectRows, subcategoryRows, totals, withDeltas, UNLOGGED, type Ctx,
 } from "../lib/aggregate";
-import { fmtHours, fmtPct, fmtRange } from "../lib/format";
+import { fmtDay, fmtHours, fmtPct, fmtRange } from "../lib/format";
+import { goalsTakeaway } from "../lib/goals";
 import { o1Takeaway, o2Takeaway, o3Takeaway, o4Takeaway } from "../lib/takeaway";
-import type { Block } from "../lib/types";
+import type { Block, GoalsProgress } from "../lib/types";
 
 interface Props {
   ctx: Ctx;
@@ -15,12 +17,15 @@ interface Props {
   previous: Ctx | null;
   /** Why there is no previous period, for the captions. */
   noPrevious: string | null;
+  /** Goals measured over the week and month happening now; null while they load or with no calendar. */
+  goals: GoalsProgress | null;
+  onOpenSettings: () => void;
   onShowBlocks: (title: string, blocks: Block[]) => void;
   onUsePreset: (preset: string) => void;
 }
 
 /** "Where did my time go, and how did that change?" (ux-v2 page-overview.md) */
-export default function Overview({ ctx, previous, noPrevious, onShowBlocks, onUsePreset }: Props) {
+export default function Overview({ ctx, previous, noPrevious, goals, onOpenSettings, onShowBlocks, onUsePreset }: Props) {
   const { analysis, settings } = ctx;
   const t = useMemo(() => totals(ctx), [ctx]);
   const prevTotals = useMemo(() => (previous ? totals(previous) : null), [previous]);
@@ -60,8 +65,29 @@ export default function Overview({ ctx, previous, noPrevious, onShowBlocks, onUs
     );
   }
 
+  const goalBlocks = useCallback((scope: string) => {
+    const [category, sub] = scope.split(":").map((part) => part.trim());
+    return analysis.blocks.filter((b) => b.category.toUpperCase() === category.toUpperCase()
+      && (!sub || b.subcategories.some((s) => s.toLowerCase() === sub.toLowerCase())));
+  }, [analysis]);
+
   return (
     <>
+      {goals && (
+        <Card code="G" title="Is my time going where I want?" className="span2 goalcard"
+          lede={goalsTakeaway(goals.goals)}
+          controls={<button className="btn" onClick={onOpenSettings}>{goals.goals.length ? "Edit goals" : "Add a goal"}</button>}
+          caption={goals.goals.length
+            ? `Judged over this week and this calendar month, as of ${fmtDay(goals.as_of)}${goals.as_of !== goals.today ? " (the day your file was exported)" : ""}. `
+              + "The line is the goal, the upright mark what is expected by now. Unlogged time never counts toward a goal."
+            : undefined}>
+          {goals.goals.length
+            ? <GoalRows items={goals.goals} settings={settings}
+                onShowBlocks={(item) => onShowBlocks(`Blocks counting toward ${item.scope} ${item.label}`, goalBlocks(item.scope))} />
+            : <p className="faint">A goal is a category and an amount: at least 10 h of LEARN a week, at most 5 h of
+              ME: scrolling. Add one in Settings and this card starts answering the question.</p>}
+        </Card>
+      )}
       <div className="tiles">
         <StatTile label="Logged" value={t.loggedHours.toFixed(1)} unit="h"
           context={`${fmtPct(t.loggedHours / t.denominatorHours, 0)} of ${fmtHours(t.denominatorHours)} available`}

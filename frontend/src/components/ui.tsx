@@ -27,17 +27,19 @@ export function SectionLabel({ children }: { children: ReactNode }) {
   return <h3 className="sectionlabel">{children}</h3>;
 }
 
-export function StatTile({ label, value, unit, context, previous }: {
+export function StatTile({ label, value, unit, context, previous, previousPrefix = true }: {
   label: string; value: string; unit?: string; context?: ReactNode;
-  /** "prev. 92%": the same number for the previous period, left out when there is none. */
+  /** A second context line. On Overview's tiles it is the previous period, so it reads "prev. 92%". */
   previous?: ReactNode;
+  /** false on tiles where the second line is not a previous-period number (R4's medians). */
+  previousPrefix?: boolean;
 }) {
   return (
     <div className="tile">
       <div className="label">{label}</div>
       <div className="value">{value}{unit && <span className="unit">{" "}{unit}</span>}</div>
       {context && <div className="ctx">{context}</div>}
-      {previous && <div className="ctx prev">prev. {previous}</div>}
+      {previous && <div className="ctx prev">{previousPrefix ? "prev. " : ""}{previous}</div>}
     </div>
   );
 }
