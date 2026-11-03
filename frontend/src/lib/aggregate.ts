@@ -545,20 +545,37 @@ export interface ProjectRow {
   last: string;
   /** Where the hours came from, in stack order; zero categories left out. */
   mix: { key: string; hours: number }[];
+  /** Block hours per week (or per month on long periods) of the period, empty ones included. */
+  trend: { key: string; hours: number }[];
+}
+
+/** O4's small trend: one bar per week while that is 26 bars or fewer, else one per month. */
+export function projectTrendKind(dayCount: number): "week" | "month" {
+  return Math.ceil(dayCount / 7) <= MAX_WEEK_BUCKETS ? "week" : "month";
 }
 
 export function projectRows(ctx: Ctx): ProjectRow[] {
   const t = totals(ctx);
-  const rows = new Map<string, { hours: number; blocks: number; days: Set<string>; mix: Map<string, number> }>();
+  const all = periodDays(ctx).all;
+  const kind = projectTrendKind(all.length);
+  const bucketOf = (day: string) => (kind === "week" ? weekStartOf(day, ctx.settings.week_start) : startOfMonth(day));
+  const trendKeys = [...new Set(all.map(bucketOf))];
+  const rows = new Map<string, {
+    hours: number; blocks: number; days: Set<string>; mix: Map<string, number>; trend: Map<string, number>;
+  }>();
   for (const b of ctx.analysis.blocks) {
     for (const project of b.projects) {
-      const row = rows.get(project) ?? { hours: 0, blocks: 0, days: new Set<string>(), mix: new Map<string, number>() };
+      const row = rows.get(project) ?? {
+        hours: 0, blocks: 0, days: new Set<string>(), mix: new Map<string, number>(), trend: new Map<string, number>(),
+      };
       const hours = b.duration_min / 60;
       const key = stackKey(b.category, ctx.settings);
+      const day = b.start_local.slice(0, 10);
       row.hours += hours;
       row.blocks += 1;
-      row.days.add(b.start_local.slice(0, 10));
+      row.days.add(day);
       row.mix.set(key, (row.mix.get(key) ?? 0) + hours);
+      row.trend.set(bucketOf(day), (row.trend.get(bucketOf(day)) ?? 0) + hours);
       rows.set(project, row);
     }
   }
@@ -570,6 +587,7 @@ export function projectRows(ctx: Ctx): ProjectRow[] {
         project, hours: r.hours, share: t.denominatorHours ? r.hours / t.denominatorHours : 0,
         blocks: r.blocks, activeDays: days.length, first: days[0], last: days[days.length - 1],
         mix: order.filter((k) => r.mix.get(k)).map((k) => ({ key: k, hours: r.mix.get(k)! })),
+        trend: trendKeys.map((key) => ({ key, hours: r.trend.get(key) ?? 0 })),
       };
     })
     .sort((a, b) => b.hours - a.hours);

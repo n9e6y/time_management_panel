@@ -1,6 +1,7 @@
 // How a measured goal reads on screen: its words, its glyph and the geometry of one bullet row.
 // Pure and tested; the row itself is drawn in GoalRows.tsx.
-import { fmtDay, fmtHours, fmtPct } from "./format";
+import { fmtDay, fmtHours, fmtPct, fmtSpan, fmtWeekdays } from "./format";
+import { daysBetween } from "./time";
 import type { GoalProgress, GoalStatus } from "./types";
 
 /** The category a goal's scope belongs to: "ME: scrolling" is coloured as ME. */
@@ -80,6 +81,16 @@ export function rowScale(item: GoalProgress): number {
   return Math.max(...ends, 1);
 }
 
+/** The goal line(s) on a row and the label under each: `10 h`, or `49` and `63 h` for a range. */
+export function goalLines(item: GoalProgress): { at: number; label: string }[] {
+  const n = (h: number) => String(Number(h.toFixed(1)));
+  if (item.type === "range") {
+    return [{ at: item.min ?? 0, label: n(item.min ?? 0) }, { at: item.max ?? 0, label: `${n(item.max ?? 0)} h` }];
+  }
+  if (item.type === "fixed" || !item.hours) return [];
+  return [{ at: item.hours, label: `${n(item.hours)} h` }];
+}
+
 /** The zone rail under the bar: out of range, close to the goal, then on target. */
 export function zones(item: GoalProgress): { from: number; to: number; tone: "out" | "close" | "target" }[] {
   const scale = rowScale(item);
@@ -135,16 +146,97 @@ export function summarize(items: GoalProgress[]): GoalsSummary {
   };
 }
 
-/** The goal card's one-line answer: "2 of 4 goals on pace". */
-export function goalsTakeaway(items: GoalProgress[]): string {
-  if (!items.length) return "No goals yet. Add one in Settings to see whether your time goes where you want.";
+const NUMBER_WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+const numberWord = (n: number) => NUMBER_WORDS[n] ?? String(n);
+const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+
+/** Which tone is worst: what the headline speaks about first. */
+const SEVERITY: Record<StatusTone, number> = { behind: 0, over: 1, close: 2, met: 3, none: 4 };
+
+/** How far a running goal is behind where it should be by now (falls back to what it still needs). */
+function behindBy(item: GoalProgress): number {
+  const expected = item.expected ?? item.expected_min;
+  return expected !== null && expected > item.actual ? expected - item.actual : item.gap;
+}
+
+function headlineFor(item: GoalProgress): string {
+  const span = item.every === "week" ? "week" : "month";
+  const goal = item.every === "week" ? "weekly goal" : "monthly goal";
+  switch (tone(item.status)) {
+    case "behind":
+      return item.running ? `${item.scope} is ${fmtHours(behindBy(item))} behind pace this ${span}.`
+        : `${item.scope} ended ${fmtHours(item.gap)} short of its ${goal}.`;
+    case "over":
+      if (!item.running) return `${item.scope} went ${fmtHours(item.gap)} past its ${goal}.`;
+      return item.projected !== null
+        ? `${item.scope} is heading over its ${goal}: ≈ ${fmtHours(item.projected)} at this rate.`
+        : `${item.scope} is heading over its ${goal}.`;
+    default:
+      return item.running ? `${item.scope} is close to pace this ${span}.` : `${item.scope} came close to its ${goal}.`;
+  }
+}
+
+/**
+ * The goal panel's verdict (new-ui Overview hero): the goal most off track in one sentence, then a
+ * quieter sentence about the rest. Every word comes from the measured goals.
+ */
+export function goalsHeadline(items: GoalProgress[]): { head: string; rest: string } {
+  if (!items.length) {
+    return { head: "No goals yet.", rest: "Add one in Settings to see whether your time goes where you want." };
+  }
   const s = summarize(items);
-  if (!s.judged) return `${s.fixed} fixed goal${s.fixed === 1 ? "" : "s"}: hours are shown, never judged.`;
-  const verb = s.running ? "on pace" : "met";
-  const parts = [`${s.good} of ${s.judged} goals ${verb}`];
-  if (s.close) parts.push(`${s.close} close`);
-  if (s.behind) parts.push(`${s.behind} ${s.running ? "behind" : "missed"}`);
-  if (s.over) parts.push(`${s.over} over`);
-  if (s.fixed) parts.push(`${s.fixed} fixed`);
-  return `${parts.join(" · ")}.`;
+  const fixedNote = s.fixed ? `${capitalize(numberWord(s.fixed))} fixed ${plural(s.fixed, "goal is", "goals are")} logged, not judged.` : "";
+  if (!s.judged) return { head: `${capitalize(numberWord(s.fixed))} fixed ${plural(s.fixed, "goal", "goals")}: hours are shown, never judged.`, rest: "" };
+
+  const judged = items.filter((i) => tone(i.status) !== "none");
+  const worst = [...judged].sort((a, b) => SEVERITY[tone(a.status)] - SEVERITY[tone(b.status)]
+    || (tone(a.status) === "behind" ? behindBy(b) - behindBy(a) : b.gap - a.gap))[0];
+  if (tone(worst.status) === "met") {
+    const verb = s.running ? "on pace or met" : "met";
+    const head = s.judged === 1 ? `Your one judged goal is ${verb}.`
+      : s.judged === 2 ? `Both judged goals are ${verb}.` : `All ${numberWord(s.judged)} judged goals are ${verb}.`;
+    return { head, rest: fixedNote };
+  }
+
+  const others = judged.filter((i) => i !== worst);
+  const off = others.filter((i) => ["behind", "over"].includes(tone(i.status))).length;
+  const close = others.filter((i) => tone(i.status) === "close").length;
+  let rest = "";
+  if (others.length && off) {
+    rest = `${capitalize(numberWord(off))} other ${plural(off, "goal is", "goals are")} off pace too.`;
+  } else if (others.length) {
+    const the = others.length === 1 ? "The other judged goal is" : `The other ${numberWord(others.length)} judged goals are`;
+    rest = `${the} ${close ? "met, on pace or close" : s.running ? "met or on pace" : "met"}.`;
+  }
+  return { head: headlineFor(worst), rest };
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** The tally under the verdict: how many goals sit in each tone, worst-first words, zero rows left out. */
+export function goalsTally(items: GoalProgress[]): { tone: StatusTone; glyph: string; n: number; word: string }[] {
+  const s = summarize(items);
+  const rows: { tone: StatusTone; n: number; word: string }[] = [
+    { tone: "met", n: s.good, word: s.running ? "on pace or met" : "met" },
+    { tone: "close", n: s.close, word: "close" },
+    { tone: "behind", n: s.behind, word: s.running ? "behind pace" : "missed" },
+    { tone: "over", n: s.over, word: s.running ? "over or heading over" : "over" },
+    { tone: "none", n: s.fixed, word: "fixed, not judged" },
+  ];
+  return rows.filter((r) => r.n > 0).map((r) => ({ ...r, glyph: GLYPH[r.tone] }));
+}
+
+/** A goal group's heading line: `Sat 24 – Fri 30 Oct · day 6 of 7, Fri is off`. */
+export function groupLine(rows: GoalProgress[], asOf: string, daysOff: string[]): string {
+  const [first] = rows;
+  const weekly = first.every === "week";
+  const parts = [fmtSpan(first.first_day, first.last_day, weekly)];
+  if (first.running) {
+    const upTo = asOf < first.last_day ? asOf : first.last_day;
+    parts.push(`day ${daysBetween(first.first_day, upTo).length} of ${daysBetween(first.first_day, first.last_day).length}`);
+  }
+  const off = weekly && daysOff.length ? `, ${fmtWeekdays(daysOff)} ${plural(daysOff.length, "is", "are")} off` : "";
+  return `${parts.join(" · ")}${off}`;
 }

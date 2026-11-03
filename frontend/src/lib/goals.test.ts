@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { categoryOf, detail, glyph, goalsTakeaway, rowScale, summarize, tone, upperEnd, word, zones } from "./goals";
+import {
+  categoryOf, detail, glyph, goalLines, goalsHeadline, goalsTally, groupLine, rowScale, summarize, tone, upperEnd, word, zones,
+} from "./goals";
 import type { GoalProgress } from "./types";
 
 const plain = (line: string) => line.replace(/ /g, " ");
@@ -88,30 +90,80 @@ describe("one row's geometry", () => {
   });
 });
 
-describe("the card's one-line answer", () => {
-  it("counts what is on pace while the week runs", () => {
-    const items = [
-      progress({ id: "a", running: true, status: "on_pace" }),
-      progress({ id: "b", running: true, status: "behind" }),
-      progress({ id: "c", running: true, status: "heading_over" }),
-      progress({ id: "d", running: true, status: "logged", type: "fixed" }),
-    ];
+describe("the hero's verdict", () => {
+  /** The design's own example: LEARN behind this week, the other four judged goals fine, one fixed. */
+  const week = [
+    progress({ id: "learn", running: true, status: "behind", actual: 6, expected: 7.1, gap: 4, projected: 8.45 }),
+    progress({ id: "scroll", scope: "ME: scrolling", type: "cap", hours: 5, running: true, status: "on_pace", actual: 3.5 }),
+    progress({ id: "sleep", scope: "SLEEP", type: "range", min: 49, max: 63, running: true, status: "close", actual: 41 }),
+    progress({ id: "research", scope: "RESEARCH", hours: 4, running: true, status: "on_pace", actual: 4.5 }),
+    progress({ id: "learn-m", every: "month", hours: 40, running: true, status: "on_pace", actual: 37.5 }),
+    progress({ id: "class", scope: "CLASS", every: "month", type: "fixed", hours: null, running: true, status: "logged" }),
+  ];
 
-    expect(summarize(items)).toMatchObject({ total: 4, judged: 3, good: 1, behind: 1, over: 1, fixed: 1 });
-    expect(goalsTakeaway(items)).toBe("1 of 3 goals on pace · 1 behind · 1 over · 1 fixed.");
+  it("leads with the goal most off track and sums up the rest", () => {
+    expect(summarize(week)).toMatchObject({ total: 6, judged: 5, good: 3, close: 1, behind: 1, fixed: 1 });
+    const { head, rest } = goalsHeadline(week);
+    expect(plain(head)).toBe("LEARN is 1.1 h behind pace this week.");
+    expect(rest).toBe("The other four judged goals are met, on pace or close.");
   });
 
-  it("switches to 'met' once the period is over", () => {
-    expect(goalsTakeaway([progress({ status: "met" }), progress({ id: "b", status: "missed" })]))
-      .toBe("1 of 2 goals met · 1 missed.");
+  it("counts each tone for the tally, leaving out the empty ones", () => {
+    expect(goalsTally(week).map((t) => `${t.glyph} ${t.n} ${t.word}`)).toEqual([
+      "✓ 3 on pace or met", "○ 1 close", "▼ 1 behind pace", "· 1 fixed, not judged",
+    ]);
+  });
+
+  it("puts behind before over, and says when others are off pace too", () => {
+    const { head, rest } = goalsHeadline([
+      progress({ id: "a", scope: "ME", type: "cap", hours: 5, running: true, status: "heading_over", projected: 7, actual: 4 }),
+      progress({ id: "b", running: true, status: "behind", actual: 1, expected: 3, gap: 9 }),
+    ]);
+    expect(plain(head)).toBe("LEARN is 2.0 h behind pace this week.");
+    expect(rest).toBe("One other goal is off pace too.");
+  });
+
+  it("speaks of a cap heading over in terms of where this rate leads", () => {
+    const { head } = goalsHeadline([progress({ scope: "ME", type: "cap", hours: 5, running: true, status: "heading_over", projected: 7.2 })]);
+    expect(plain(head)).toBe("ME is heading over its weekly goal: ≈ 7.2 h at this rate.");
+  });
+
+  it("reports a finished period by how far it ended from the goal", () => {
+    const { head, rest } = goalsHeadline([progress({ status: "met" }), progress({ id: "b", scope: "SLEEP", status: "missed", gap: 3 })]);
+    expect(plain(head)).toBe("SLEEP ended 3.0 h short of its weekly goal.");
+    expect(rest).toBe("The other judged goal is met.");
+  });
+
+  it("says when every judged goal is fine, and mentions the fixed ones", () => {
+    const { head, rest } = goalsHeadline([progress({ running: true, status: "on_pace" }), progress({ id: "b", running: true, status: "on_pace" }),
+      progress({ id: "c", type: "fixed", status: "logged" })]);
+    expect(head).toBe("Both judged goals are on pace or met.");
+    expect(rest).toBe("One fixed goal is logged, not judged.");
   });
 
   it("invites the first goal when there are none", () => {
-    expect(goalsTakeaway([])).toContain("No goals yet.");
+    expect(goalsHeadline([]).head).toBe("No goals yet.");
   });
 
   it("says nothing is judged when every goal is fixed", () => {
-    expect(goalsTakeaway([progress({ type: "fixed", status: "logged" })]))
-      .toBe("1 fixed goal: hours are shown, never judged.");
+    expect(goalsHeadline([progress({ type: "fixed", status: "logged" })]).head).toBe("One fixed goal: hours are shown, never judged.");
+  });
+});
+
+describe("goal group headings and lines", () => {
+  it("names the week with weekdays, how far into it we are, and the days off", () => {
+    const rows = [progress({ first_day: "2026-10-24", last_day: "2026-10-30", running: true })];
+    expect(groupLine(rows, "2026-10-29", ["Friday"])).toBe("Sat 24 – Fri 30 Oct · day 6 of 7, Fri is off");
+  });
+
+  it("names the month without weekdays", () => {
+    const rows = [progress({ every: "month", first_day: "2026-10-01", last_day: "2026-10-31", running: true })];
+    expect(groupLine(rows, "2026-10-29", ["Friday"])).toBe("1 – 31 Oct · day 29 of 31");
+  });
+
+  it("labels one goal line, or both ends of a range", () => {
+    expect(goalLines(progress())).toEqual([{ at: 10, label: "10 h" }]);
+    expect(goalLines(progress({ type: "range", min: 49, max: 63 })).map((l) => l.label)).toEqual(["49", "63 h"]);
+    expect(goalLines(progress({ type: "fixed", hours: null }))).toEqual([]);
   });
 });

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { fixtureCtx, syntheticCtx } from "../test/fixture";
 import {
   averageDay, barcode, bucketKind, categoryRows, coverage, coverageShare, dayProbability, groupOf, median, mixOverTime,
-  periodDays, previousRange, projectRows, sleepNights, subcategoryRows, totals, weekdayHeatmap, withDeltas,
+  periodDays, previousRange, projectRows, projectTrendKind, sleepNights, subcategoryRows, totals, weekdayHeatmap, withDeltas,
   MIN_DAYS_R5, MIN_NIGHTS_R4, NIGHT_START_HOUR, UNLOGGED,
 } from "./aggregate";
 
@@ -279,6 +279,18 @@ describe("O4 projects", () => {
     expect(exam.share).toBeCloseTo(14 / (7 * 24));
   });
 
+  it("splits a project's hours by week, empty weeks included, and by month on long periods", () => {
+    // 1-7 Oct 2026 with weeks starting Saturday: Thu 1 - Fri 2 in the week of 26 Sep, Sat 3 - Wed 7 in the next.
+    const [exam] = projectRows(syntheticCtx("2026-10-01", "2026-10-07"));
+    expect(exam.trend).toEqual([{ key: "2026-09-26", hours: 4 }, { key: "2026-10-03", hours: 10 }]);
+
+    expect(projectTrendKind(7 * 26)).toBe("week");
+    expect(projectTrendKind(7 * 26 + 1)).toBe("month");
+    const [year] = projectRows(syntheticCtx("2026-01-01", "2026-12-31"));
+    expect(year.trend).toHaveLength(12);
+    expect(year.trend[0]).toEqual({ key: "2026-01-01", hours: 62 });
+  });
+
   it("is empty when no title carries a +project", () => {
     const ctx = syntheticCtx("2026-10-01", "2026-10-07");
     ctx.analysis.blocks.forEach((b) => { b.projects = []; });
@@ -435,6 +447,7 @@ describe("Part B on the fixture, hand-computed", () => {
     expect(rows).toEqual([{
       project: "exam-prep", hours: 2, share: rows[0].share, blocks: 1, activeDays: 1,
       first: "2025-09-02", last: "2025-09-02", mix: [{ key: "LEARN", hours: 2 }],
+      trend: [{ key: "2025-08-30", hours: 2 }, { key: "2025-09-06", hours: 0 }],
     }]);
     expect(rows[0].share).toBeCloseTo(2 / totals(fixtureCtx()).denominatorHours);
   });

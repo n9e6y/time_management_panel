@@ -1,91 +1,91 @@
-import { categoryOf, detail, glyph, rowScale, tone, upperEnd, word, zones } from "../lib/goals";
-import { fmtHours, fmtRange } from "../lib/format";
-import { colorVar } from "../lib/theme";
+import { categoryOf, detail, glyph, goalLines, groupLine, rowScale, tone, word, zones } from "../lib/goals";
+import { fmtHours } from "../lib/format";
+import { pct } from "../lib/geometry";
+import { fillOf } from "../lib/theme";
 import type { GoalProgress, Settings } from "../lib/types";
 
-const ROW = 30;      // drawing height per goal (bar 10px, rail 4px under it)
-const BAR = 10;
-const RAIL = 4;
-
-/** One bullet row per goal: the bar, the zone rail, the goal line and the expected-by-now mark. */
+/** One goal's meter: zone rail, logged bar, "at this rate", the goal line(s) and the expected-by-now mark. */
 function Bullet({ item, settings }: { item: GoalProgress; settings: Settings }) {
   const scale = rowScale(item);
-  const pct = (hours: number) => `${Math.min(100, (hours / scale) * 100)}%`;
-  const target = upperEnd(item);
+  const at = (hours: number) => pct(Math.min(1, hours / scale));
+  const fill = fillOf(categoryOf(item.scope), settings);
+  const rate = item.projected !== null && item.projected > item.actual;
   return (
-    <svg className="bullet" viewBox={`0 0 100 ${ROW}`} preserveAspectRatio="none" height={ROW} role="img"
-      aria-label={`${fmtHours(item.actual)} of ${item.label}`}>
-      {/* the zone rail, 4px under the bar */}
+    <div className="bullet" role="img" aria-label={`${fmtHours(item.actual)} of ${item.label}`}>
       {zones(item).map((zone) => (
-        <rect key={zone.tone + zone.from} x={pct(zone.from)} y={BAR + 4} height={RAIL}
-          width={pct(Math.max(0, zone.to - zone.from))} fill={`var(--zone-${zone.tone})`} />
+        <div key={zone.tone + zone.from} className={`zone zone-${zone.tone}`}
+          style={{ left: at(zone.from), width: at(Math.max(0, zone.to - zone.from)) }} />
       ))}
-      {/* "at this rate", from the bar end to where the period would end up */}
-      {item.projected !== null && item.projected > item.actual && (
-        <rect x={pct(item.actual)} y={0.5} height={BAR - 1} width={pct(item.projected - item.actual)}
-          fill="none" stroke="var(--projection)" strokeWidth={1} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
+      {rate && <div className="proj" style={{ left: at(item.actual), width: at(item.projected! - item.actual) }} />}
+      <div className="bar" style={{ width: at(item.actual), background: fill }} />
+      {goalLines(item).map((line) => (
+        <div key={line.label}>
+          <div className="line" style={{ left: at(line.at) }} />
+          <div className="line-label" style={{ left: at(line.at) }}>{line.label}</div>
+        </div>
+      ))}
+      {item.running && item.expected !== null && (
+        <div className="expected" title="expected by now" style={{ left: at(item.expected) }} />
       )}
-      <rect x={0} y={0} height={BAR} width={pct(item.actual)} fill={`var(--${colorVar(categoryOf(item.scope), settings)})`} />
-      {target > 0 && (
-        <rect x={pct(target)} y={0} width={1.5} height={BAR + RAIL + 4} fill="var(--goal-line)"
-          vectorEffect="non-scaling-stroke" />
+      {item.running && item.type === "range" && item.expected_min !== null && item.expected_max !== null && (
+        <div className="bracket" title="expected by now"
+          style={{ left: at(item.expected_min), width: at(item.expected_max - item.expected_min) }} />
       )}
-      {/* expected by now: one mark for a floor or cap, a bracket for a range */}
-      {item.expected !== null && item.running && (
-        <rect x={pct(item.expected)} y={-2} width={2} height={BAR + 6} fill="var(--expected)"
-          vectorEffect="non-scaling-stroke" />
-      )}
-      {item.running && item.expected_min !== null && item.expected_max !== null && (
-        <rect x={pct(item.expected_min)} y={-2} width={pct(item.expected_max - item.expected_min)} height={2}
-          fill="var(--expected)" />
-      )}
-    </svg>
+    </div>
+  );
+}
+
+function Row({ item, settings, onShowBlocks }: { item: GoalProgress; settings: Settings; onShowBlocks?: (item: GoalProgress) => void }) {
+  const value = fmtHours(item.actual, item.estimated > 0);
+  const body = (
+    <>
+      <div className="who">
+        <span className="scope">{item.scope}</span>
+        <span className="label">{item.label}</span>
+      </div>
+      <div className="meter">
+        {item.type === "fixed"
+          ? <div className="fixed-note"><span style={{ background: fillOf(categoryOf(item.scope), settings) }} />not judged on hours</div>
+          : <Bullet item={item} settings={settings} />}
+      </div>
+      <div className="value">{value}</div>
+      <div className={`status st-${tone(item.status)}`}>
+        <div className="word"><span className="g" aria-hidden="true">{glyph(item.status)}</span><span>{word(item)}</span></div>
+        {detail(item) && <div className="detail">{detail(item)}</div>}
+      </div>
+    </>
+  );
+  if (!onShowBlocks) return <div className="goalrow">{body}</div>;
+  return (
+    <button type="button" className="goalrow" onClick={() => onShowBlocks(item)}
+      aria-label={`${item.scope} ${item.label}: ${value}, ${word(item)}. Show the blocks behind this goal`}>
+      {body}
+    </button>
   );
 }
 
 interface Props {
   items: GoalProgress[];
   settings: Settings;
+  /** The day goals are judged up to (today, or the export day). */
+  asOf: string;
   onShowBlocks?: (item: GoalProgress) => void;
 }
 
 /** The goal rows, weekly first, each group under the period it is judged over. */
-export default function GoalRows({ items, settings, onShowBlocks }: Props) {
+export default function GoalRows({ items, settings, asOf, onShowBlocks }: Props) {
   const groups = (["week", "month"] as const)
     .map((every) => ({ every, rows: items.filter((item) => item.every === every) }))
     .filter((group) => group.rows.length);
   return (
-    <div className="goals">
+    <div className="goal-groups">
       {groups.map(({ every, rows }) => (
         <div key={every}>
-          <div className="goalgroup">
-            {every === "week" ? "Weekly" : "Monthly"} · {fmtRange(rows[0].first_day, rows[0].last_day)}
-            {rows[0].running && <> · {Math.round(rows[0].elapsed * 100)}% elapsed</>}
+          <div className="goal-head">
+            <span className="eyebrow strong">{every === "week" ? "Weekly" : "Monthly"}</span>
+            <span className="sub">{groupLine(rows, asOf, settings.days_off)}</span>
           </div>
-          {rows.map((item) => (
-            <div className="goalrow" key={item.id}>
-              <div className="who">
-                <span className="cat">{item.scope}</span>{" "}
-                <span className="faint">{item.label}</span>
-              </div>
-              <div className="meter">
-                {item.type === "fixed" ? <span className="faint small">not judged on hours</span>
-                  : <Bullet item={item} settings={settings} />}
-              </div>
-              <div className="value">
-                {onShowBlocks ? (
-                  <button className="linkbtn" onClick={() => onShowBlocks(item)}
-                    title={`Show the ${item.blocks} block(s) behind this goal`}>
-                    {fmtHours(item.actual, item.estimated > 0)}
-                  </button>
-                ) : fmtHours(item.actual, item.estimated > 0)}
-              </div>
-              <div className={`status st-${tone(item.status)}`}>
-                <span aria-hidden="true">{glyph(item.status)}</span> {word(item)}
-                {detail(item) && <div className="faint small">{detail(item)}</div>}
-              </div>
-            </div>
-          ))}
+          {rows.map((item) => <Row key={item.id} item={item} settings={settings} onShowBlocks={onShowBlocks} />)}
         </div>
       ))}
     </div>

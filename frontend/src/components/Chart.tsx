@@ -1,17 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { EChartsOption } from "echarts";
 import * as echarts from "echarts/core";
-import { BarChart, CustomChart, HeatmapChart, LineChart } from "echarts/charts";
-import {
-  AriaComponent, CalendarComponent, GridComponent, LegendComponent, MarkLineComponent, TooltipComponent,
-  VisualMapPiecewiseComponent,
-} from "echarts/components";
+import { HeatmapChart } from "echarts/charts";
+import { AriaComponent, CalendarComponent, TooltipComponent, VisualMapPiecewiseComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import { readPalette, type Palette } from "../lib/theme";
 
-// Only the parts the charts use (keeps the bundle small).
-echarts.use([BarChart, LineChart, HeatmapChart, CustomChart, GridComponent, TooltipComponent, LegendComponent,
-  VisualMapPiecewiseComponent, CalendarComponent, MarkLineComponent, AriaComponent, CanvasRenderer]);
+// Only the parts the coverage calendar uses (keeps the bundle small); the other charts are HTML and SVG.
+echarts.use([HeatmapChart, TooltipComponent, VisualMapPiecewiseComponent, CalendarComponent, AriaComponent, CanvasRenderer]);
 
 interface Props {
   /** Builds the ECharts option from the current theme colors. */

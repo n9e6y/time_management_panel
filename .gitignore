@@ -237,3 +237,6 @@ CLAUDE.local.md
 # --- Frontend ---
 node_modules/
 frontend/dist/
+
+## --- UI ---
+new-ui

@@ -1,14 +1,18 @@
-import { useCallback, useMemo, useState } from "react";
-import Chart from "../components/Chart";
+import { useCallback, useMemo, useRef, useState } from "react";
 import GoalRows from "../components/GoalRows";
-import { Card, MixBar, NotEnoughData, StatTile } from "../components/ui";
-import { categoryBars, mixBars, subcategoryBars } from "../charts/options";
+import { Card, NotEnoughData, SectionHead, StatTile, useDismiss } from "../components/ui";
+import { CategoryTable, PartsBars } from "../charts/CategoryTable";
+import MixChart from "../charts/MixChart";
+import ProjectTable from "../charts/ProjectTable";
 import {
-  categoryRows, mixOverTime, periodDays, projectRows, subcategoryRows, totals, withDeltas, UNLOGGED, type Ctx,
+  averageDay, categoryRows, coverage, mixOverTime, periodDays, projectRows, projectTrendKind, subcategoryRows, totals,
+  withDeltas, UNLOGGED, type Ctx,
 } from "../lib/aggregate";
-import { fmtDay, fmtHours, fmtPct, fmtRange } from "../lib/format";
-import { goalsTakeaway } from "../lib/goals";
+import { fmtDay, fmtHours, fmtPct, fmtRange, fmtSpan } from "../lib/format";
+import { pct } from "../lib/geometry";
+import { goalsHeadline, goalsTally } from "../lib/goals";
 import { o1Takeaway, o2Takeaway, o3Takeaway, o4Takeaway } from "../lib/takeaway";
+import { fillOf, useCompact } from "../lib/theme";
 import type { Block, GoalsProgress } from "../lib/types";
 
 interface Props {
@@ -19,14 +23,19 @@ interface Props {
   noPrevious: string | null;
   /** Goals measured over the week and month happening now; null while they load or with no calendar. */
   goals: GoalsProgress | null;
+  /** "Last 30 days", "This month", "Custom range": the stats band's heading. */
+  periodLabel: string;
   onOpenSettings: () => void;
   onShowBlocks: (title: string, blocks: Block[]) => void;
   onUsePreset: (preset: string) => void;
 }
 
-/** "Where did my time go, and how did that change?" (ux-v2 page-overview.md) */
-export default function Overview({ ctx, previous, noPrevious, goals, onOpenSettings, onShowBlocks, onUsePreset }: Props) {
+const monthName = (day: string) => new Date(`${day}T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
+
+/** "Is my time going where I want?" and "Where did it go, and how did that change?" (new-ui Overview). */
+export default function Overview({ ctx, previous, noPrevious, goals, periodLabel, onOpenSettings, onShowBlocks, onUsePreset }: Props) {
   const { analysis, settings } = ctx;
+  const compact = useCompact();
   const t = useMemo(() => totals(ctx), [ctx]);
   const prevTotals = useMemo(() => (previous ? totals(previous) : null), [previous]);
   const days = useMemo(() => periodDays(ctx), [ctx]);
@@ -42,136 +51,195 @@ export default function Overview({ ctx, previous, noPrevious, goals, onOpenSetti
 
   const subRows = useMemo(() => (selected ? subcategoryRows(ctx, selected) : []), [ctx, selected]);
   const mix = useMemo(() => mixOverTime(ctx, only || null), [ctx, only]);
+  const average = useMemo(() => averageDay(ctx, "calendar")[0] ?? null, [ctx]);
   const projects = useMemo(() => projectRows(ctx), [ctx]);
-
-  const o1 = useMemo(() => categoryBars(rows, settings, selected, !!previous || !!noPrevious), [rows, settings, selected, previous, noPrevious]);
-  const o2 = useMemo(() => (selected ? subcategoryBars(subRows, selected, settings) : null), [subRows, selected, settings]);
-  const o3 = useMemo(() => ("notEnough" in mix ? null : mixBars(mix, settings, only || null)), [mix, settings, only]);
+  const spark = useMemo(() => coverage(ctx).filter((d) => !d.partial && !d.notInFile), [ctx]);
 
   const blocksOf = useCallback((category: string) => analysis.blocks.filter((b) => b.category === category), [analysis]);
-  const onO1Click = useCallback((e: { name: string }) => {
-    if (e.name === UNLOGGED) return;
-    setPicked(e.name);
-  }, []);
-  const choices = Object.keys(settings.categories).filter((c) => rows.some((r) => r.key === c && r.hours > 0));
-
-  if (analysis.segments.length === 0) {
-    return (
-      <NotEnoughData
-        first={`No logged time between ${analysis.range.first_day} and ${analysis.range.last_day}.`}
-        second={analysis.calendar.first_day ? `Your calendar file covers ${fmtRange(analysis.calendar.first_day, analysis.calendar.last_day!)}.` : "The calendar file has no events."}
-        action={<button className="btn" onClick={() => onUsePreset("3m")}>Use Last 90 days</button>}
-      />
-    );
-  }
-
   const goalBlocks = useCallback((scope: string) => {
     const [category, sub] = scope.split(":").map((part) => part.trim());
     return analysis.blocks.filter((b) => b.category.toUpperCase() === category.toUpperCase()
       && (!sub || b.subcategories.some((s) => s.toLowerCase() === sub.toLowerCase())));
   }, [analysis]);
+  const choices = Object.keys(settings.categories).filter((c) => rows.some((r) => r.key === c && r.hours > 0));
+  const { first_day: first, last_day: last } = analysis.range;
 
   return (
     <>
-      {goals && (
-        <Card code="G" title="Is my time going where I want?" className="span2 goalcard"
-          lede={goalsTakeaway(goals.goals)}
-          controls={<button className="btn" onClick={onOpenSettings}>{goals.goals.length ? "Edit goals" : "Add a goal"}</button>}
-          caption={goals.goals.length
-            ? `Judged over this week and this calendar month, as of ${fmtDay(goals.as_of)}${goals.as_of !== goals.today ? " (the day your file was exported)" : ""}. `
-              + "The line is the goal, the upright mark what is expected by now. Unlogged time never counts toward a goal."
-            : undefined}>
-          {goals.goals.length
-            ? <GoalRows items={goals.goals} settings={settings}
-                onShowBlocks={(item) => onShowBlocks(`Blocks counting toward ${item.scope} ${item.label}`, goalBlocks(item.scope))} />
-            : <p className="faint">A goal is a category and an amount: at least 10 h of LEARN a week, at most 5 h of
-              ME: scrolling. Add one in Settings and this card starts answering the question.</p>}
-        </Card>
+      <section className="hero">
+        {goals && <GoalsPanel goals={goals} settings={settings} onOpenSettings={onOpenSettings}
+          onShowBlocks={(item) => onShowBlocks(`Blocks counting toward ${item.scope} ${item.label}`, goalBlocks(item.scope))} />}
+        <div className="band" role="region" aria-label={`${periodLabel} in numbers`}>
+          <div className="band-head">
+            <span className="eyebrow strong">{periodLabel}</span>
+            <span className="sub">
+              {fmtSpan(first, last)}
+              {previous ? ` · prev. = ${fmtSpan(previous.analysis.range.first_day, previous.analysis.range.last_day)}` : " · nothing earlier to compare with"}
+            </span>
+          </div>
+          <div className="stats">
+            <StatTile label="Logged" value={t.loggedHours.toFixed(1)} unit="h"
+              context={`${fmtPct(t.denominatorHours ? t.loggedHours / t.denominatorHours : 0, 0)} of ${fmtHours(t.denominatorHours)} available`}
+              previous={prevTotals ? fmtPct(prevTotals.denominatorHours ? prevTotals.loggedHours / prevTotals.denominatorHours : 0, 0) : null}>
+              <div className="meter6"><span style={{ width: pct(t.denominatorHours ? t.loggedHours / t.denominatorHours : 0) }} /></div>
+            </StatTile>
+            <StatTile label="Per day" value={t.avgPerDay.toFixed(1)} unit="h" context={`over ${t.fullDays} calendar days`}
+              previous={prevTotals ? fmtHours(prevTotals.avgPerDay) : null}>
+              {spark.length > 1 && (
+                <div className="spark" role="img" aria-label="Logged share of each full day">
+                  {spark.map((d) => <span key={d.day} title={`${fmtDay(d.day)}: ${fmtHours(d.hours)}`} style={{ height: pct(Math.min(1, d.share)) }} />)}
+                </div>
+              )}
+            </StatTile>
+            <StatTile label="Focus sessions" value={String(t.focusSessions)}
+              context={`blocks of ${settings.focus.min_minutes}+ min in focus categories`}
+              previous={prevTotals ? String(prevTotals.focusSessions) : null} />
+            <StatTile label="Blocks" value={String(t.blocks)} context={`${t.skipped} skipped`}
+              previous={prevTotals ? String(prevTotals.blocks) : null} />
+          </div>
+        </div>
+      </section>
+
+      {analysis.segments.length === 0 ? (
+        <div style={{ marginTop: 32 }}>
+          <NotEnoughData
+            first={`No logged time between ${fmtDay(first)} and ${fmtDay(last)}.`}
+            second={analysis.calendar.first_day ? `Your calendar file covers ${fmtRange(analysis.calendar.first_day, analysis.calendar.last_day!)}.` : "The calendar file has no events."}
+            action={<button className="btn" onClick={() => onUsePreset("3m")}>Use Last 90 days</button>}
+          />
+        </div>
+      ) : (
+        <>
+          <SectionHead title="Where it went" note={fmtRange(first, last)} />
+          <div className="grid o12">
+            <Card code="O1" title="Where did my time go, and what grew or shrank?"
+              lede={o1Takeaway(rows, !!previous)}
+              controls={selected && <button className="btn" onClick={() => onShowBlocks(`${selected} blocks`, blocksOf(selected))}>Show {selected} blocks</button>}
+              caption={<>
+                {`Share of ${fmtHours(t.denominatorHours)}: ${t.fullDays} full days${days.todayInProgress ? " plus today's logged hours (today is in progress)" : ""}. Per day = full days only.`}
+                {previous ? ` vs prev. = hours minus the ${fmtRange(previous.analysis.range.first_day, previous.analysis.range.last_day)} period; changes under 2 h are drawn without an arrow.` : ""}
+                {noPrevious ? ` ${noPrevious}` : ""}
+                {" Click a bar to see what it was made of."}
+              </>}>
+              <CategoryTable rows={rows} settings={settings} selected={selected} comparable={!!previous || !!noPrevious} onSelect={setPicked} />
+            </Card>
+            <Card code="O2" title={`What was ${selected ?? "it"} made of?`} dot={selected ? fillOf(selected, settings) : undefined}
+              lede={selected ? o2Takeaway(subRows, selected) : undefined}
+              caption={subRows.some((r) => r.estimated) ? "≈ hours come from titles split on \" - \", divided evenly: an estimate." : "Sub-categories ranked by hours."}>
+              {selected && subRows.length ? <PartsBars rows={subRows} category={selected} settings={settings} />
+                : <NotEnoughData first="Nothing logged yet." second="Pick a category with time in the table." />}
+            </Card>
+          </div>
+
+          <SectionHead title="How it changed" note={"notEnough" in mix ? undefined : `one bar per ${mix.kind}`} />
+          <Card code="O3" title="How has my time changed over the period?"
+            lede={"notEnough" in mix ? undefined : o3Takeaway(mix, only || null)}
+            controls={<CategoryPicker value={only} choices={choices} onChange={setOnly} settings={settings} />}
+            caption={"notEnough" in mix ? undefined : only
+              ? `${only} hours per day${mix.kind === "day" ? "" : `, averaged over each ${mix.kind}`}; the dashed line is the period average.${mix.kind === "day" ? " \"off\" marks a day off." : ""}`
+              : `Hours per day${mix.kind === "day" ? "" : `, averaged over each ${mix.kind}`}; each full day adds up to 24 h. avg = the period's average day. Hatched = unlogged (inside the file, nothing logged). Dotted = not yet or not in this file, never counted as unlogged.${mix.kind === "day" ? " \"off\" marks a day off." : ""}`}>
+            {"notEnough" in mix
+              ? <NotEnoughData first="One bucket only: choose a longer period to see change."
+                second={`This period makes ${mix.have} bar.`}
+                action={<button className="btn" onClick={() => onUsePreset("1m")}>Use Last 30 days</button>} />
+              : <MixChart mix={mix} average={average} category={only || null} settings={settings} days={days} today={ctx.today} compact={compact} />}
+          </Card>
+
+          <SectionHead title="Projects" note="+project tags" />
+          <Card code="O4" title="Which projects took my time, and from where?"
+            lede={projects.length ? o4Takeaway(projects) : undefined}
+            caption={projects.length ? "Block hours, so they are not estimates. A block can carry two projects; it then counts in both rows, so rows can add up to more than the total." : undefined}>
+            {projects.length
+              ? <ProjectTable rows={projects} settings={settings} trendKind={projectTrendKind(days.all.length)}
+                onShowBlocks={(r) => onShowBlocks(`+${r.project} blocks`, analysis.blocks.filter((b) => b.projects.includes(r.project)))} />
+              : <p className="faint">No +project tags in this period. Add <code>+name</code> to a title to track a project.</p>}
+          </Card>
+        </>
       )}
-      <div className="tiles">
-        <StatTile label="Logged" value={t.loggedHours.toFixed(1)} unit="h"
-          context={`${fmtPct(t.loggedHours / t.denominatorHours, 0)} of ${fmtHours(t.denominatorHours)} available`}
-          previous={prevTotals ? fmtPct(prevTotals.loggedHours / prevTotals.denominatorHours, 0) : null} />
-        <StatTile label="Per day" value={t.avgPerDay.toFixed(1)} unit="h" context={`over ${t.fullDays} calendar days`}
-          previous={prevTotals ? fmtHours(prevTotals.avgPerDay) : null} />
-        <StatTile label="Focus sessions" value={String(t.focusSessions)}
-          context={`blocks of ${settings.focus.min_minutes}+ min in focus categories`}
-          previous={prevTotals ? String(prevTotals.focusSessions) : null} />
-        <StatTile label="Blocks" value={String(t.blocks)} context={`${t.skipped} skipped`}
-          previous={prevTotals ? String(prevTotals.blocks) : null} />
-      </div>
-      <div className="grid">
-        <Card code="O1" title="Where did my time go, and what grew or shrank?" className="span2"
-          lede={o1Takeaway(rows, !!previous)}
-          controls={selected && <button className="btn" onClick={() => onShowBlocks(`${selected} blocks`, blocksOf(selected))}>Show {selected} blocks</button>}
-          caption={<>
-            {`Share of ${fmtHours(t.denominatorHours)}: ${t.fullDays} full days${days.todayInProgress ? " plus today's logged hours (today is in progress)" : ""}. Per day = full days only.`}
-            {previous ? ` vs prev. = hours minus the ${fmtRange(previous.analysis.range.first_day, previous.analysis.range.last_day)} period; changes under 2 h are drawn without an arrow.` : ""}
-            {noPrevious ? ` ${noPrevious}` : ""}
-            {" Click a bar to see what it was made of."}
-          </>}>
-          <Chart label="Hours per category" height={Math.max(160, rows.length * 34)} option={o1} onClick={onO1Click} />
-        </Card>
-        <Card code="O2" title={`What was ${selected ?? "it"} made of?`}
-          lede={selected ? o2Takeaway(subRows, selected) : undefined}
-          caption={subRows.some((r) => r.estimated) ? "≈ hours come from titles split on \" - \", divided evenly: an estimate." : "Sub-categories ranked by hours."}>
-          {o2 ? <Chart label={`Sub-categories of ${selected}`} height={Math.max(120, subRows.length * 32)} option={o2} />
-            : <NotEnoughData first="Nothing logged yet." second="Pick a category with time in O1." />}
-        </Card>
-        <Card code="O3" title="How has my time changed over the period?" className="span2"
-          lede={"notEnough" in mix ? undefined : o3Takeaway(mix, only || null)}
-          controls={
-            <label className="faint">Show{" "}
-              <select className="select" value={only} onChange={(e) => setOnly(e.target.value)} aria-label="Categories in O3">
-                <option value="">All categories</option>
-                {choices.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </label>
-          }
-          caption={"notEnough" in mix ? undefined
-            : `Average hours per day in each ${mix.kind}; whole ${mix.kind}s add up to a full day. "part" marks a ${mix.kind} the period cuts short, "off" a day off. Dotted = after the export, never counted as unlogged.`}>
-          {o3 && !("notEnough" in mix)
-            ? <div className="scroll"><div style={{ minWidth: Math.max(560, mix.buckets.length * 26) }}><Chart label="Mix over time" height={280} option={o3} /></div></div>
-            : <NotEnoughData first="One bucket only: choose a longer period to see change."
-              second={`This period makes ${"notEnough" in mix ? mix.have : 0} bar(s).`}
-              action={<button className="btn" onClick={() => onUsePreset("1m")}>Use Last 30 days</button>} />}
-        </Card>
-        <Card code="O4" title="Which projects took my time, and from where?" className="span2"
-          lede={projects.length ? o4Takeaway(projects, t) : undefined}
-          caption={projects.length ? "Block hours, so they are not estimates. A block can carry two projects; it then counts in both rows, so rows can add up to more than the total." : undefined}>
-          {projects.length ? (
-            <div className="scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Project</th><th className="num">Hours</th><th className="num">Share</th>
-                    <th className="num">Active days</th><th>First – last</th><th>Category mix</th><th className="num">Blocks</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {projects.map((r) => (
-                    <tr key={r.project}>
-                      <td>+{r.project}</td>
-                      <td className="num">{fmtHours(r.hours)}</td>
-                      <td className="num">{fmtPct(r.share, 1)}</td>
-                      <td className="num">{r.activeDays}</td>
-                      <td>{fmtRange(r.first, r.last)}</td>
-                      <td><MixBar parts={r.mix} settings={settings} /></td>
-                      <td className="num">
-                        <button className="linkbtn" onClick={() => onShowBlocks(`+${r.project} blocks`, analysis.blocks.filter((b) => b.projects.includes(r.project)))}>
-                          {r.blocks}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="faint">No +project tags in this period. Add <code>+name</code> to a title to track a project.</p>
-          )}
-        </Card>
-      </div>
     </>
+  );
+}
+
+/** The goal half of the hero: verdict, tally and Edit on the left, the rows on the right. */
+function GoalsPanel({ goals, settings, onOpenSettings, onShowBlocks }: {
+  goals: GoalsProgress; settings: Ctx["settings"]; onOpenSettings: () => void;
+  onShowBlocks: (item: GoalsProgress["goals"][number]) => void;
+}) {
+  const { head, rest } = goalsHeadline(goals.goals);
+  const spans = [
+    goals.goals.some((g) => g.every === "week") && "this week",
+    goals.goals.some((g) => g.every === "month") && monthName(goals.goals.find((g) => g.every === "month")!.first_day),
+  ].filter(Boolean).join(" and ");
+  return (
+    <div className="hero-top" role="region" aria-label="Is my time going where I want?">
+      <div className="hero-left">
+        <div className="intro">
+          <div className="eyebrow">Is my time going where I want?</div>
+          <div className="sub">Goals{spans ? ` · ${spans}` : ""}</div>
+        </div>
+        <h1>{head}{rest && <>{" "}<span className="rest">{rest}</span></>}</h1>
+        {goals.goals.length > 0 && (
+          <div className="tally">
+            {goalsTally(goals.goals).map((row) => (
+              <div key={row.tone}>
+                <span className={`glyph st-${row.tone}`} aria-hidden="true">{row.glyph}</span>
+                <span className="n">{row.n}</span><span className="word">{row.word}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="bottom">
+          <div><button className="btn" onClick={onOpenSettings}>{goals.goals.length ? "Edit goals" : "Add a goal"}</button></div>
+        </div>
+      </div>
+      <div className="hero-right">
+        {goals.goals.length ? (
+          <>
+            <GoalRows items={goals.goals} settings={settings} asOf={goals.as_of} onShowBlocks={onShowBlocks} />
+            <div className="goal-key">
+              <span><span className="k-logged" />logged</span>
+              <span><span className="k-goal" />goal</span>
+              <span><span className="k-expected" />expected by now</span>
+              <span><span className="k-rate" />at this rate</span>
+              <p className="caption">
+                {`Judged over this week and this calendar month, as of ${fmtDay(goals.as_of)}${goals.as_of !== goals.today ? " (the day your file was exported)" : ""}. `}
+                The line is the goal, the upright mark what is expected by now. Unlogged time never counts toward a goal. Click a row for the blocks that counted.
+              </p>
+            </div>
+          </>
+        ) : (
+          <p className="goal-empty">A goal is a category and an amount: at least 10 h of LEARN a week, at most 5 h of
+            ME: scrolling. Add one in Settings and this panel starts answering the question.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** O3's "Show ● All categories ▾" picker. */
+function CategoryPicker({ value, choices, onChange, settings }: {
+  value: string; choices: string[]; onChange: (v: string) => void; settings: Ctx["settings"];
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(open, close, ref);
+  const dot = (key: string) => (key ? fillOf(key, settings) : "var(--text-3)");
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button className="pick" aria-expanded={open} aria-label="Categories in O3" onClick={() => setOpen(!open)}>
+        <span className="muted">Show</span><span className="dot8" style={{ background: dot(value) }} />
+        <b>{value || "All categories"}</b><span className="caret">▾</span>
+      </button>
+      {open && (
+        <div className="listbox" role="listbox" aria-label="Categories in O3">
+          {["", ...choices].map((key) => (
+            <button key={key || "all"} role="option" aria-selected={value === key} onClick={() => { onChange(key); setOpen(false); }}>
+              <span className="dot8" style={{ background: dot(key) }} />{key || "All categories"}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

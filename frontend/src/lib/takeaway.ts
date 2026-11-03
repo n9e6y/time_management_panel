@@ -2,7 +2,7 @@
 // in a sentence. Pure and tested, so the words can never drift from the picture.
 import {
   NIGHT_START_HOUR, OTHER, UNLOGGED, type AverageDayRow, type BarcodeDay, type CategoryRow, type DayProbability,
-  type MixOverTime, type Nights, type ProjectRow, type SubcategoryRow, type Totals, type WeekdayHeatmap,
+  type MixOverTime, type Nights, type ProjectRow, type SubcategoryRow, type WeekdayHeatmap,
 } from "./aggregate";
 import { SLOT_MINUTES } from "./aggregate";
 import { fmtClock, fmtDay, fmtHours, fmtPct, fmtSigned } from "./format";
@@ -44,6 +44,10 @@ export function o3Takeaway(mix: MixOverTime, category: string | null): string {
   if (category) {
     const top = largest(mix.buckets, (b) => b.hours[0].hours);
     const average = mix.average ?? 0;
+    if (mix.kind === "day") {
+      return `${category} averaged ${fmtHours(average)} a day across ${count} days; the most was `
+        + `${fmtHours(top!.hours[0].hours)} on ${fmtDay(top!.key)}.`;
+    }
     return `${category} averaged ${fmtHours(average)} a day across ${count} ${many}, most in the ${one} of `
       + `${fmtDay(top!.key)} (${fmtHours(top!.hours[0].hours)} a day).`;
   }
@@ -61,13 +65,43 @@ export function o3Takeaway(mix: MixOverTime, category: string | null): string {
   return `From the first whole ${one} to the last, ${up.key} ${verb} the most: ${fmtSigned(up.change)} a day.`;
 }
 
-export function o4Takeaway(rows: ProjectRow[], t: Totals): string {
+/** `+exam took 38.5 h, 5.5% of your time, on 17 days; most of it came from LEARN.` (the largest project) */
+export function o4Takeaway(rows: ProjectRow[]): string {
   if (!rows.length) return "No +project tags in this period.";
-  const hours = rows.reduce((a, r) => a + r.hours, 0);
-  const share = t.denominatorHours ? hours / t.denominatorHours : 0;
   const [top] = rows;
-  return `${rows.length} ${rows.length === 1 ? "project" : "projects"} took ${fmtHours(hours)} `
-    + `(${fmtPct(share, 0)} of the period); +${top.project} was the largest at ${fmtHours(top.hours)}.`;
+  const parts = [...top.mix].sort((a, b) => b.hours - a.hours);
+  const from = parts.length === 1 ? `all of it came from ${parts[0].key}`
+    : parts[0].hours / top.hours >= 0.5 ? `most of it came from ${parts[0].key}`
+      : `it came from ${listWords(parts.slice(0, 3).map((p) => p.key))}`;
+  return `+${top.project} took ${fmtHours(top.hours)}, ${fmtPct(top.share, 1)} of your time, on `
+    + `${top.activeDays} ${top.activeDays === 1 ? "day" : "days"}; ${from}.`;
+}
+
+function listWords(words: string[]): string {
+  return words.length <= 1 ? (words[0] ?? "") : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+}
+
+/** O4's words under a project's mix bar: `mostly LEARN, some CLASS`, or the categories in order. */
+export function mixWords(mix: { key: string; hours: number }[]): string {
+  const parts = [...mix].sort((a, b) => b.hours - a.hours);
+  const total = parts.reduce((a, p) => a + p.hours, 0);
+  if (parts.length <= 1 || !total) return parts[0]?.key ?? "";
+  if (parts[0].hours / total >= 0.7) return `mostly ${parts[0].key}, some ${listWords(parts.slice(1, 3).map((p) => p.key))}`;
+  const named = parts.slice(0, 3).map((p) => p.key).join(", ");
+  return parts.length > 3 ? `${named} +${parts.length - 3} more` : named;
+}
+
+/** R1's second sentence: the next-biggest difference between days off and workdays. */
+export function r1Second(rows: AverageDayRow[]): string {
+  const workday = rows.find((r) => r.type === "Workday");
+  const dayOff = rows.find((r) => r.type === "Day off");
+  if (!workday?.days || !dayOff?.days) return "";
+  const diffs = real(workday.hours)
+    .map((h) => ({ key: h.key, work: h.hours, off: dayOff.hours.find((x) => x.key === h.key)?.hours ?? 0 }))
+    .sort((a, b) => Math.abs(b.off - b.work) - Math.abs(a.off - a.work));
+  const next = diffs[1];
+  if (!next || Math.abs(next.off - next.work) < 0.1) return "";
+  return `${next.key} ${next.off > next.work ? "rises" : "falls"} from ${fmtHours(next.work)} to ${fmtHours(next.off)}.`;
 }
 
 export function r1Takeaway(rows: AverageDayRow[]): string {
@@ -116,7 +150,8 @@ export function r4Takeaway(data: Nights): string {
   if (bedtimeWorkday === null || bedtimeDayOff === null) return base;
   const shift = bedtimeDayOff - bedtimeWorkday;
   if (Math.abs(shift) < 0.25) return `${base} Days off barely shift it.`;
-  return `${base} On days off you go to bed ${fmtClock(Math.abs(shift))} ${shift > 0 ? "later" : "earlier"}.`;
+  const by = Math.abs(shift) < 1.5 ? `${Math.round(Math.abs(shift) * 60)} min` : fmtHours(Math.abs(shift));
+  return `${base} On days off you go to bed ${by} ${shift > 0 ? "later" : "earlier"}.`;
 }
 
 export function r5Takeaway(days: BarcodeDay[]): string {

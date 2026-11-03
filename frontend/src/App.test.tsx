@@ -99,10 +99,48 @@ describe("returning user", () => {
 
   it("re-analyses the saved file when the period changes and keeps it in the URL", async () => {
     await returningUser();
-    fireEvent.change(screen.getByLabelText("Period"), { target: { value: "this_week" } });
+    const bar = screen.getByRole("group", { name: "Period" });
+    expect(within(bar).getByRole("button", { name: "30 days" })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(within(bar).getByRole("button", { name: "This week" }));
     await waitFor(() => expect(posts("/api/analyze")).toHaveLength(2));
     expect(posts("/api/analyze")[1].url).toBe("/api/analyze?period=this_week");
     expect(window.location.search).toBe("?period=this_week");
+  });
+
+  it("offers every other period under More, and names the chosen one on the bar", async () => {
+    await returningUser();
+    fireEvent.click(within(screen.getByRole("group", { name: "Period" })).getByRole("button", { name: /More/ }));
+    const menu = screen.getByRole("dialog", { name: "More periods" });
+    expect(within(menu).getByText("Rolling (up to today)")).toBeInTheDocument();
+
+    fireEvent.click(within(menu).getByRole("button", { name: "Last 14 days" }));
+    await waitFor(() => expect(posts("/api/analyze")).toHaveLength(2));
+    expect(posts("/api/analyze")[1].url).toBe("/api/analyze?period=2w");
+    expect(screen.queryByRole("dialog", { name: "More periods" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("group", { name: "Period" })).getByRole("button", { name: /Last 14 days/ }))
+      .toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("switches between light and dark from the top bar and remembers the choice", async () => {
+    window.localStorage.clear();
+    await returningUser();
+    const toggle = screen.getByRole("button", { name: "Switch to dark" });
+
+    fireEvent.click(toggle);
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(window.localStorage.getItem("time-analyzer-theme")).toBe("dark");
+    expect(screen.getByRole("button", { name: "Switch to light" })).toBeInTheDocument();
+    window.localStorage.clear();
+  });
+
+  it("shows what the category picked in the table was made of", async () => {
+    await returningUser();
+    expect(screen.getByText("What was SLEEP made of?")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^LEARN/ }));
+    expect(screen.getByText("What was LEARN made of?")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^LEARN/ })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("shows the file's facts and where it is saved", async () => {
@@ -217,7 +255,8 @@ describe("pages in the URL (Stage 3.5 Part B)", () => {
     mockServer(saved(INFO));
     render(<App />);
 
-    expect(await screen.findByText("What does an average day look like, and do my days off differ?")).toBeInTheDocument();
+    expect(await screen.findByText("What does an average day look like?")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "What does an average day look like, and do my days off differ?" })).toBeInTheDocument();
     expect(posts("/api/analyze")[0].url).toContain("period=1w");
   });
 
@@ -283,8 +322,10 @@ describe("goals (Stage 4)", () => {
     render(<App />);
     await screen.findByText("Where did my time go, and what grew or shrank?");
 
-    expect(await screen.findByText("0 of 1 goals on pace · 1 behind.")).toBeInTheDocument();
+    expect(await screen.findByText(/^LEARN is 2\.3.h behind pace this week\.$/)).toBeInTheDocument();
     const card = screen.getByLabelText("Is my time going where I want?");
+    expect(within(card).getByText("behind pace")).toBeInTheDocument();  // the tally
+    expect(within(card).getByText(/Sat 6 – Fri 12 Sep · day 3 of 7, Fri is off/)).toBeInTheDocument();
     expect(within(card).getByText("LEARN")).toBeInTheDocument();
     expect(within(card).getByText("≥ 10 h")).toBeInTheDocument();
     expect(within(card).getByText("Behind pace")).toBeInTheDocument();
