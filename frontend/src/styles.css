@@ -111,6 +111,13 @@ h1 { font-size: 20px; line-height: 28px; font-weight: 600; margin: 0 0 16px; }
   border-bottom: 1px solid var(--border); }
 .goaledit:last-child { border-bottom: 0; }
 .goaledit .input { width: 150px; } .goaledit .input.hours { width: 76px; }
+
+/* fixing a title from Data quality */
+.fixes { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.fixtitle { width: 100%; }
+.fixtitle .input { width: 100%; margin-bottom: 6px; }
+.fixtitle .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.select.small { height: 24px; padding: 0 4px; font-size: 12px; }
 @container page (max-width: 700px) {
   .goalrow { grid-template-columns: 1fr 76px; }
   .goalrow .who { grid-column: 1 / -1; }

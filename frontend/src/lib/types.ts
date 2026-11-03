@@ -62,6 +62,8 @@ export interface Analysis {
     skipped: { uid: string; title: string; start: string | null; reason: string }[];
     overlaps: { block_a: number; block_b: number; minutes: number }[];
     title_issues: Record<string, TitleIssue[]>;
+    /** Correction key -> how many events' titles it changed in this period. */
+    corrected: Record<string, number>;
   };
 }
 
@@ -179,5 +181,21 @@ export interface GoalsProgress {
   /** Last day with real data: today, or the calendar's export day when that is earlier. */
   as_of: string;
   today: string;
+  path: string;
+}
+
+// --- title corrections -------------------------------------------------------------------------
+
+/** A corrected title, applied when the calendar is read. Exactly one matcher is set. */
+export interface Correction {
+  title: string;
+  /** One event, and every occurrence of it when it repeats. */
+  uid?: string;
+  /** Every event whose title is exactly this text. */
+  match_title?: string;
+}
+
+export interface CorrectionsResponse {
+  corrections: Correction[];
   path: string;
 }

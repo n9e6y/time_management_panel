@@ -46,5 +46,5 @@ def analysis_payload(blocks: pd.DataFrame, segments: pd.DataFrame, report, first
         "blocks": frame_records(blocks),
         "segments": frame_records(segments),
         "report": to_json({"skipped": report.skipped, "overlaps": report.overlaps,
-                           "title_issues": report.title_issues}),
+                           "title_issues": report.title_issues, "corrected": report.corrected}),
     }

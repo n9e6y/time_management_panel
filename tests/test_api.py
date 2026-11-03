@@ -449,3 +449,85 @@ def test_a_path_cannot_escape_the_built_folder(built, root):
     res = client.get("/../config.example.yaml")
 
     assert "timezone" not in res.text  # the config is never served; the app page is
+
+
+# --- title corrections -------------------------------------------------------------------------
+
+TYPO_ICS = (b"BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//t//EN\n"
+            b"BEGIN:VEVENT\nUID:typo1\nDTSTART:20250902T090000Z\nDTEND:20250902T100000Z\n"
+            b"SUMMARY:LEARm: calculus\nEND:VEVENT\n"
+            b"BEGIN:VEVENT\nUID:typo2\nDTSTART:20250903T090000Z\nDTEND:20250903T100000Z\n"
+            b"SUMMARY:LEARm: calculus\nEND:VEVENT\nEND:VCALENDAR\n")
+FIX = {"corrections": [{"match_title": "LEARm: calculus", "title": "LEARN: calculus"}]}
+
+
+def test_no_corrections_at_first(client, private_data_home):
+    body = client.get("/api/corrections").json()
+
+    assert body["corrections"] == []
+    assert body["path"] == str(private_data_home / "corrections.yaml")
+
+
+def test_corrections_are_saved_outside_the_repository(client, private_data_home, root):
+    res = client.put("/api/corrections", json=FIX)
+
+    assert res.status_code == 200
+    assert res.json()["corrections"] == [{"title": "LEARN: calculus", "match_title": "LEARm: calculus"}]
+    assert (private_data_home / "corrections.yaml").exists()
+    assert not list(root.glob("corrections.yaml"))
+    assert client.get("/api/corrections").json()["corrections"] == res.json()["corrections"]
+
+
+def test_corrections_that_cannot_be_saved_list_every_problem(client):
+    res = client.put("/api/corrections", json={"corrections": [{"title": "ME: lunch"}]})
+
+    assert res.status_code == 422
+    assert any("give either uid" in p for p in res.json()["detail"]["problems"])
+
+
+def test_a_correction_changes_what_analyze_returns(client):
+    before = analyze(client, body=TYPO_ICS, start="2025-09-01", end="2025-09-30").json()
+    assert sorted({b["category"] for b in before["blocks"]}) == ["LEARM"]
+    assert before["report"]["title_issues"]["unknown_category"]
+
+    client.put("/api/corrections", json=FIX)
+    after = analyze(client, body=TYPO_ICS, start="2025-09-01", end="2025-09-30").json()
+
+    assert sorted({b["category"] for b in after["blocks"]}) == ["LEARN"]
+    assert after["report"]["title_issues"] == {}
+    assert after["report"]["corrected"] == {"title:LEARm: calculus": 2}
+
+
+def test_saving_a_correction_drops_the_cached_analysis(client):
+    first = analyze(client, body=TYPO_ICS, start="2025-09-01", end="2025-09-30")
+    cached = analyze(client, body=TYPO_ICS, start="2025-09-01", end="2025-09-30")
+    assert first.headers["X-Analysis-Cache"] == "miss" and cached.headers["X-Analysis-Cache"] == "hit"
+
+    client.put("/api/corrections", json=FIX)
+    again = analyze(client, body=TYPO_ICS, start="2025-09-01", end="2025-09-30")
+
+    assert again.headers["X-Analysis-Cache"] == "miss"
+    assert sorted({b["category"] for b in again.json()["blocks"]}) == ["LEARN"]
+
+
+def test_corrections_reach_the_goals_card_too(client):
+    save(client, body=TYPO_ICS, name="typo.ics")
+    client.put("/api/goals", json={"goals": [
+        {"id": "learn-month", "scope": "LEARN", "every": "month", "type": "floor", "hours": 4}]})
+    assert client.get("/api/goals/progress").json()["goals"][0]["actual"] == 0.0
+
+    client.put("/api/corrections", json=FIX)
+
+    assert client.get("/api/goals/progress").json()["goals"][0]["actual"] == 2.0
+
+
+def test_a_correction_survives_replacing_the_calendar_with_a_new_export(client):
+    client.put("/api/corrections", json=FIX)
+    save(client, body=TYPO_ICS, name="export-1.ics")
+    assert sorted({b["category"] for b in analyze(client, body=b"", start="2025-09-01", end="2025-09-30").json()["blocks"]}) == ["LEARN"]
+
+    # A fresh export still has the typo; the correction is keyed to the title, so it still applies.
+    save(client, body=TYPO_ICS + b"", name="export-2.ics")
+
+    after = analyze(client, body=b"", start="2025-09-01", end="2025-09-30").json()
+    assert sorted({b["category"] for b in after["blocks"]}) == ["LEARN"]

@@ -35,3 +35,8 @@ class AnalysisCache:
             self._items.move_to_end(key)
             while len(self._items) > self.maxsize:
                 self._items.popitem(last=False)
+
+    def clear(self) -> None:
+        """Drop every held result: the titles they were computed from have changed."""
+        with self._lock:
+            self._items.clear()

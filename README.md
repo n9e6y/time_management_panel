@@ -13,7 +13,8 @@
   what each category was made of, how the mix changed week by week, and which projects took your time.
 * **Rhythm**: your average day and whether days off differ, when in the day each activity happens, which weekdays
   carry which activity, a sleep actogram with median bedtime and wake, and a life barcode of every day in the period.
-* **Data quality**: which days are fully logged, which titles need fixing, what was skipped and what overlaps.
+* **Data quality**: which days are fully logged, which titles need fixing, what was skipped and what overlaps —
+  and you can fix a mistyped title from the page, without editing the calendar and exporting again.
 * **Settings in the app**: timezone, the day your week starts, your days off, categories (order, color, focus),
   and your goals.
 * **Private by design**: everything runs and stays on your computer. Nothing is uploaded anywhere, and your
@@ -80,6 +81,23 @@ this file", never as unlogged time.
 
 Re-export and drop the new file in whenever you want fresh numbers: the panel never talks to Google itself.
 
+### Fixing a typo without re-exporting
+
+Data quality lists every title the app could not read cleanly, with the fix next to it:
+
+* **a category not in your list** — add it as a category, or map a misspelling onto a real one (`LEARm` → `LEARN`),
+  which then applies to every event you ever wrote that way;
+* **a tag not in your list** — add it to your known tags;
+* **anything else** (a typo, a bad score, a missing colon) — **Fix title…**, then either *this event* or *all events
+  written this way*.
+
+Title corrections are saved in `~/.time-analyzer/corrections.yaml` and applied every time the calendar is read, so
+they reach every chart, every goal and the CSV export, and they still apply after you drop in a fresh export. They
+are listed at the bottom of Data quality and can be undone there.
+
+Two things they do not do: the `.ics` file on your computer is left exactly as exported, and **your Google Calendar
+is not changed** — the app only reads it. If you want the typo gone at the source, fix it in Google too.
+
 ### Goals
 
 Settings → Goals. A goal is a category or sub-category, how often it is judged, and an amount:
@@ -114,7 +132,8 @@ Periods: `1w 2w 1m 3m 6m 1y 2y 5y` (last N days), `this_week last_week this_mont
 saved calendar.
 
 `GET`/`PUT /api/config` read and save your settings (`PUT` rewrites `config.yaml`), and `GET`/`PUT /api/goals` your
-goals; `GET /api/goals/progress` measures every goal over the week and month happening now. The saved calendar is
+goals; `GET /api/goals/progress` measures every goal over the week and month happening now.
+`GET`/`PUT /api/corrections` read and save your title corrections. The saved calendar is
 `GET /api/calendar` (its facts), `PUT /api/calendar?name=&data_as_of=` (raw body; parsed before it is saved),
 `POST /api/calendar/check` (compares a file with the saved one without saving it),
 `POST /api/calendar/restore` and `DELETE /api/calendar`.
@@ -134,7 +153,7 @@ Your calendar is personal data. `data/`, `*.ics` files (except the synthetic tes
 Everything runs locally; nothing is uploaded anywhere. The API only listens on `127.0.0.1` and only accepts
 requests from the local frontend (`TIME_ANALYZER_ORIGINS` changes the allowed origins). The calendar you load is
 kept in `~/.time-analyzer/` — outside the repository, so it can never be committed — together with one previous
-copy for Undo and your `goals.yaml`. "Remove from this computer" deletes both. Nothing is uploaded anywhere.
+copy for Undo, your `goals.yaml` and your `corrections.yaml`. "Remove from this computer" deletes both. Nothing is uploaded anywhere.
 
 ## Development
 
@@ -161,6 +180,7 @@ Tests use only the synthetic calendar in `tests/fixtures/` (see `tests/fixtures/
 │   ├── api/               # FastAPI app (routes, cache, JSON conversion)
 │   ├── config.py          # loads, validates and saves config.yaml
 │   ├── ingest.py          # calendar parsing core
+│   ├── corrections.py     # title corrections, applied when the calendar is read
 │   ├── goals.py           # weekly and monthly goals, and how they are judged
 │   ├── periods.py         # date-range presets
 │   ├── store.py           # the calendar remembered in ~/.time-analyzer/

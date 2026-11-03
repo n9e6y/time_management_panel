@@ -15,12 +15,15 @@ const INFO: CalendarInfo = {
 const saved = (info: CalendarInfo | null, has_previous = false): CalendarState => ({ calendar: info, has_previous, folder: "/home/me/.time-analyzer/calendar" });
 
 const GOALS_PATH = "/home/me/.time-analyzer/goals.yaml";
+const CORRECTIONS_PATH = "/home/me/.time-analyzer/corrections.yaml";
 let calls: { url: string; init?: RequestInit }[] = [];
 let goalList: unknown[] = [];
+let correctionList: unknown[] = [];
 
 function mockServer(start: CalendarState, overrides: Record<string, () => Promise<Response>> = {}) {
   calls = [];
   goalList = [];
+  correctionList = [];
   let state = start;
   vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
     calls.push({ url, init });
@@ -40,6 +43,11 @@ function mockServer(start: CalendarState, overrides: Record<string, () => Promis
       case "DELETE /api/calendar": state = saved(null); return json(state);
       case "POST /api/analyze": return json(fixtureAnalysis);
       case "GET /api/goals": return json({ goals: goalList, path: GOALS_PATH });
+      case "GET /api/corrections": return json({ corrections: correctionList, path: CORRECTIONS_PATH });
+      case "PUT /api/corrections": {
+        correctionList = JSON.parse(init!.body as string).corrections;
+        return json({ corrections: correctionList, path: CORRECTIONS_PATH });
+      }
       case "PUT /api/goals": return json({ goals: goalList, path: GOALS_PATH });
       case "GET /api/goals/progress":
         return json({ goals: [], as_of: "2025-09-08", today: "2025-09-08", path: GOALS_PATH });
@@ -368,5 +376,114 @@ describe("when a startup request fails", () => {
     render(<App />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/isn't running/);
+  });
+});
+
+describe("fixing a title from Data quality", () => {
+  /** The fixture calendar is clean, so give the page an analysis that has the issues we want to fix. */
+  function flagged() {
+    const analysis = structuredClone(fixtureAnalysis);
+    const [gym, tagged] = analysis.blocks;
+    Object.assign(gym, { uid: "gym-1", title: "GYM: legs", category: "GYM", task: "legs", tags: [] });
+    Object.assign(tagged, { uid: "rust-1", title: "LEARN: rust #async-io", category: "LEARN", task: "rust",
+      tags: ["async-io"] });
+    analysis.report.title_issues = {
+      unknown_category: [{ block_id: gym.block_id, title: gym.title, start_local: gym.start_local,
+        issues: ["unknown_category"] }],
+      unknown_tag: [{ block_id: tagged.block_id, title: tagged.title, start_local: tagged.start_local,
+        issues: ["unknown_tag"] }],
+    };
+    return analysis;
+  }
+
+  const openQuality = async (overrides: Record<string, () => Promise<Response>> = {}) => {
+    mockServer(saved(INFO), { "POST /api/analyze": () => json(flagged()), ...overrides });
+    render(<App />);
+    await screen.findByText("Where did my time go, and what grew or shrank?");
+    fireEvent.click(screen.getByRole("button", { name: /Data quality/ }));
+    return screen.findByText("Which titles need fixing?");
+  };
+
+  it("corrects one event's title", async () => {
+    await openQuality();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Fix title…" })[0]);
+    const field = screen.getByLabelText("Corrected title");
+    fireEvent.change(field, { target: { value: "ME: gym legs" } });
+    fireEvent.click(screen.getByRole("button", { name: "This event" }));
+
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/corrections" && c.init?.method === "PUT")).toBe(true));
+    const sent = JSON.parse(calls.find((c) => c.url === "/api/corrections" && c.init?.method === "PUT")!.init!.body as string);
+    expect(sent.corrections).toEqual([{ title: "ME: gym legs", uid: "gym-1" }]);
+  });
+
+  it("corrects every event written the same way", async () => {
+    await openQuality();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Fix title…" })[0]);
+    fireEvent.change(screen.getByLabelText("Corrected title"), { target: { value: "ME: gym legs" } });
+    fireEvent.click(screen.getByRole("button", { name: /written this way/ }));
+
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/corrections" && c.init?.method === "PUT")).toBe(true));
+    const sent = JSON.parse(calls.find((c) => c.url === "/api/corrections" && c.init?.method === "PUT")!.init!.body as string);
+    expect(sent.corrections[0].match_title).toBe("GYM: legs");
+    expect(sent.corrections[0].uid).toBeUndefined();
+  });
+
+  it("re-reads the analysis once a correction is saved, so the page updates", async () => {
+    await openQuality();
+    const before = posts("/api/analyze").length;
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Fix title…" })[0]);
+    fireEvent.change(screen.getByLabelText("Corrected title"), { target: { value: "ME: x" } });
+    fireEvent.click(screen.getByRole("button", { name: "This event" }));
+
+    await waitFor(() => expect(posts("/api/analyze").length).toBeGreaterThan(before));
+  });
+
+  it("adds an unknown category to the list with one click", async () => {
+    await openQuality();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add GYM" }));
+
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/config" && c.init?.method === "PUT")).toBe(true));
+    const sent = JSON.parse(calls.find((c) => c.url === "/api/config" && c.init?.method === "PUT")!.init!.body as string);
+    expect(sent.categories.GYM).toEqual({ focus: false, color: expect.any(Number) });
+  });
+
+  it("maps a mistyped category onto a real one with one click", async () => {
+    await openQuality();
+
+    fireEvent.change(screen.getByLabelText("Map GYM to a category"), { target: { value: "ME" } });
+
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/config" && c.init?.method === "PUT")).toBe(true));
+    const sent = JSON.parse(calls.find((c) => c.url === "/api/config" && c.init?.method === "PUT")!.init!.body as string);
+    expect(sent.legacy_categories.GYM).toEqual({ map_to: "ME", add_tags: [] });
+  });
+
+  it("adds an unknown tag to the known ones with one click", async () => {
+    await openQuality();
+
+    fireEvent.click(screen.getByRole("button", { name: /Add #async-io/ }));
+
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/config" && c.init?.method === "PUT")).toBe(true));
+    const sent = JSON.parse(calls.find((c) => c.url === "/api/config" && c.init?.method === "PUT")!.init!.body as string);
+    expect(sent.tags.known).toContain("async-io");
+  });
+
+  it("lists the corrections in use and undoes one", async () => {
+    await openQuality({
+      "GET /api/corrections": () => json({
+        corrections: [{ title: "ME: gym legs", match_title: "GYM: legs" }], path: CORRECTIONS_PATH,
+      }),
+    });
+    const card = await screen.findByLabelText("Titles you have corrected");
+
+    expect(within(card).getByText("GYM: legs")).toBeInTheDocument();
+    fireEvent.click(within(card).getByRole("button", { name: "Undo" }));
+
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/corrections" && c.init?.method === "PUT")).toBe(true));
+    const sent = JSON.parse(calls.find((c) => c.url === "/api/corrections" && c.init?.method === "PUT")!.init!.body as string);
+    expect(sent.corrections).toEqual([]);
   });
 });

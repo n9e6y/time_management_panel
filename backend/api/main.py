@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 import config
+import corrections as corrections_module
 import goals as goals_module
 import ingest
 import periods
@@ -49,6 +50,7 @@ def create_app(root: Path = config.ROOT_DIR, today: Callable[[ZoneInfo], date] =
     data_home = home or store.data_home()
     calendars = store.CalendarStore(data_home)
     goals_file = data_home / goals_module.GOALS_FILE
+    corrections_file = data_home / corrections_module.CORRECTIONS_FILE
 
     def load_settings() -> config.Config:
         try:
@@ -124,12 +126,36 @@ def create_app(root: Path = config.ROOT_DIR, today: Callable[[ZoneInfo], date] =
         first_day = min(span[0] for span in spans)
         last_day = max(span[1] for span in spans)
         try:
-            _blocks, segments, _report = await run_in_threadpool(ingest.analyze, body, first_day, last_day, cfg)
+            _blocks, segments, _report = await run_in_threadpool(
+                ingest.analyze, body, first_day, last_day, cfg, corrections_module.resolver(load_corrections()))
         except Exception:  # never echo the calendar's content back
             raise HTTPException(400, "Could not read the saved calendar file.")
         measured = goals_module.evaluate(wanted, segments, cfg, as_of)
         payload["goals"] = [goals_module.progress_to_dict(item) for item in measured]
         return payload
+
+    def load_corrections() -> list[corrections_module.Correction]:
+        try:
+            return corrections_module.load_corrections(corrections_file)
+        except corrections_module.CorrectionsError as exc:
+            raise HTTPException(422, {"message": "The corrections file has problems.", "problems": _problems(exc)})
+
+    @app.get("/api/corrections")
+    def get_corrections() -> dict:
+        saved = load_corrections()
+        return {"corrections": corrections_module.corrections_to_dict(saved)["corrections"],
+                "path": str(corrections_file)}
+
+    @app.put("/api/corrections")
+    def put_corrections(body: dict) -> dict:
+        try:
+            saved = corrections_module.corrections_from_dict(body, source=str(corrections_file))
+        except corrections_module.CorrectionsError as exc:
+            raise HTTPException(422, {"message": "These corrections can't be saved.", "problems": _problems(exc)})
+        corrections_module.save_corrections(saved, corrections_file)
+        cache.clear()  # every analysis was computed with the old titles
+        return {"corrections": corrections_module.corrections_to_dict(saved)["corrections"],
+                "path": str(corrections_file)}
 
     def calendar_response() -> dict:
         info = calendars.info()
@@ -188,12 +214,15 @@ def create_app(root: Path = config.ROOT_DIR, today: Callable[[ZoneInfo], date] =
             raise HTTPException(422, str(exc))
 
         settings = config.config_to_dict(cfg)
-        key = analysis_key(body, settings, first_day, last_day)
+        fixes = load_corrections()
+        key = analysis_key(body, {**settings, "corrections": corrections_module.corrections_to_dict(fixes)},
+                           first_day, last_day)
         if (payload := cache.get(key)) is not None:
             response.headers["X-Analysis-Cache"] = "hit"
             return payload
         try:
-            blocks, segments, report = await run_in_threadpool(ingest.analyze, body, first_day, last_day, cfg)
+            blocks, segments, report = await run_in_threadpool(ingest.analyze, body, first_day, last_day, cfg,
+                                                               corrections_module.resolver(fixes))
         except Exception:  # never echo the calendar's content back
             raise HTTPException(400, "Could not read the calendar file. Send a Google Calendar .ics export.")
         payload = analysis_payload(blocks, segments, report, first_day, last_day, settings, Path(cfg.source).name)

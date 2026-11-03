@@ -18,7 +18,9 @@ import pandas as pd
 import recurring_ical_events
 from icalendar import Calendar
 
+import corrections as corrections_module
 import syntax
+from corrections import Resolver
 
 if TYPE_CHECKING:
     from config import Config
@@ -54,6 +56,7 @@ class IngestReport:
     skipped: list[dict] = field(default_factory=list)   # uid, title, start, reason
     overlaps: list[dict] = field(default_factory=list)  # block_a, block_b, minutes
     title_issues: dict[str, list[dict]] = field(default_factory=dict)  # issue code -> blocks (validation report)
+    corrected: dict[str, int] = field(default_factory=dict)  # correction key -> events whose title it changed
     calendar_first: date | None = None  # first local day any event in the file starts
     calendar_last: date | None = None   # last local day an event starts or a recurrence ends
 
@@ -148,7 +151,8 @@ def _empty_blocks() -> pd.DataFrame:
     return pd.DataFrame({col: pd.Series(dtype="object") for col in BLOCK_COLUMNS})
 
 
-def build_blocks(instances: list[Instance], config: Config) -> tuple[pd.DataFrame, IngestReport]:
+def build_blocks(instances: list[Instance], config: Config,
+                 corrections: Resolver = corrections_module.EMPTY) -> tuple[pd.DataFrame, IngestReport]:
     """One row per valid event instance with its parsed title, plus a report of skipped events, overlaps
     and title issues.
 
@@ -176,11 +180,15 @@ def build_blocks(instances: list[Instance], config: Config) -> tuple[pd.DataFram
             if end_utc <= start_utc:
                 skip("non_positive_duration")
                 continue
-            parsed = syntax.parse_title(inst.title, config)
+            title = corrections.title_for(inst.uid, inst.title)
+            if title != inst.title:
+                key = f"uid:{inst.uid}" if corrections.by_uid.get(inst.uid) else f"title:{inst.title.strip()}"
+                report.corrected[key] = report.corrected.get(key, 0) + 1
+            parsed = syntax.parse_title(title, config)
             category = parsed.category or UNCATEGORIZED
             minutes = (end_utc - start_utc).total_seconds() / 60
             rows.append({
-                "uid": inst.uid, "title": inst.title, "description": inst.description,
+                "uid": inst.uid, "title": title, "description": inst.description,
                 "comment": syntax.clean_description(inst.description),
                 "start_utc": start_utc, "end_utc": end_utc, "duration_min": minutes,
                 "category": category, "task": parsed.task, "subcategories": parsed.subcategories,
@@ -301,11 +309,12 @@ def _as_datetime(value) -> datetime:
 # --- convenience -----------------------------------------------------------------------------
 
 def analyze(source: bytes | str | Path, first_day: date, last_day: date, config: Config,
+            corrections: Resolver = corrections_module.EMPTY,
             ) -> tuple[pd.DataFrame, pd.DataFrame, IngestReport]:
     """Whole pipeline for the local days first_day..last_day (inclusive). Returns (blocks, segments, report)."""
     tz = config.tz
     start_utc, end_utc = local_day_bounds(first_day, last_day, tz)
     cal = load_calendar(source)
-    blocks, report = build_blocks(expand_instances(cal, start_utc, end_utc), config)
+    blocks, report = build_blocks(expand_instances(cal, start_utc, end_utc), config, corrections)
     report.calendar_first, report.calendar_last = calendar_span(cal, tz)
     return blocks, split_segments(split_parts(blocks), config, start_utc, end_utc), report

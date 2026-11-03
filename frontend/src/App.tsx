@@ -8,15 +8,16 @@ import Rhythm from "./pages/Rhythm";
 import SettingsPage from "./pages/Settings";
 import Welcome from "./pages/Welcome";
 import {
-  analyze, ApiError, checkCalendar, getCalendar, getGoalProgress, getGoals, getPeriods, getSettings, pickFile,
-  removeCalendar, restoreCalendar, saveCalendar, saveGoals, saveSettings, type PickedFile,
+  analyze, ApiError, checkCalendar, getCalendar, getCorrections, getGoalProgress, getGoals, getPeriods, getSettings,
+  pickFile, removeCalendar, restoreCalendar, saveCalendar, saveCorrections, saveGoals, saveSettings,
+  type PickedFile,
 } from "./lib/api";
 import { previousRange, totals, type Ctx } from "./lib/aggregate";
 import { fmtDay, fmtRange } from "./lib/format";
 import { useRoute, type Page } from "./lib/router";
 import { todayIn } from "./lib/time";
 import type {
-  Analysis, Block, CalendarCheck, CalendarState, Goal, GoalsProgress, Period, PeriodPreset, Settings,
+  Analysis, Block, CalendarCheck, CalendarState, Correction, Goal, GoalsProgress, Period, PeriodPreset, Settings,
 } from "./lib/types";
 
 function periodFromUrl(): Period {
@@ -51,6 +52,7 @@ export default function App() {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [goalsPath, setGoalsPath] = useState("");
   const [goalProgress, setGoalProgress] = useState<GoalsProgress | null>(null);
+  const [corrections, setCorrections] = useState<Correction[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "updating">("idle");
   const [error, setError] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<{ title: string; blocks: Block[] } | null>(null);
@@ -97,6 +99,10 @@ export default function App() {
     } catch {
       setGoalProgress(null);  // goals are a bonus on the page: never block the dashboard
     }
+  }, []);
+
+  useEffect(() => {
+    getCorrections().then((saved) => setCorrections(saved.corrections)).catch(() => setCorrections([]));
   }, []);
 
   useEffect(() => {
@@ -210,6 +216,19 @@ export default function App() {
     }
   };
 
+  const onSaveCorrections = async (next: Correction[]): Promise<string[] | null> => {
+    try {
+      const saved = await saveCorrections(next);
+      setCorrections(saved.corrections);
+      if (calendar?.calendar) await run(period, true);
+      await refreshGoals(!!calendar?.calendar);
+      return null;
+    } catch (e) {
+      const err = e as ApiError;
+      return err.problems?.length ? err.problems : [err.message];
+    }
+  };
+
   const onSaveSettings = async (next: Settings): Promise<string[] | null> => {
     try {
       const saved = await saveSettings(next);
@@ -272,7 +291,8 @@ export default function App() {
               onUsePreset={(p) => { setCustomOpen(false); choosePeriod({ preset: p }); }} />}
             {page === "rhythm" && <Rhythm ctx={ctx} onShowBlocks={(title, blocks) => setDrawer({ title, blocks })}
               onUsePreset={(p) => { setCustomOpen(false); choosePeriod({ preset: p }); }} />}
-            {page === "quality" && <DataQuality ctx={ctx} onOpenSettings={() => setPage("settings")} />}
+            {page === "quality" && <DataQuality ctx={ctx} onOpenSettings={() => setPage("settings")}
+              corrections={corrections} onSaveCorrections={onSaveCorrections} onSaveSettings={onSaveSettings} />}
             {page === "settings" && <SettingsPage settings={settings!} source={source} onSave={onSaveSettings} goals={goals} goalsPath={goalsPath} onSaveGoals={onSaveGoals} />}
           </main>
         </>

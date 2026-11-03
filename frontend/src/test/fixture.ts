@@ -83,7 +83,7 @@ export function syntheticCtx(first: string, last: string, today = addDays(last, 
       segments: segments.length, skipped: 0, overlaps: 0, title_issues: 0,
     },
     blocks, segments,
-    report: { skipped: [], overlaps: [], title_issues: {} },
+    report: { skipped: [], overlaps: [], title_issues: {}, corrected: {} },
   };
   return { analysis, settings, today };
 }
