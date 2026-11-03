@@ -1,0 +1,443 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import BlocksDrawer from "./components/BlocksDrawer";
+import CalendarSlot from "./components/CalendarSlot";
+import Sheet, { Toast } from "./components/Sheet";
+import { useDismiss } from "./components/ui";
+import DataQuality from "./pages/DataQuality";
+import Overview from "./pages/Overview";
+import Rhythm from "./pages/Rhythm";
+import SettingsPage from "./pages/Settings";
+import Welcome from "./pages/Welcome";
+import {
+  analyze, ApiError, checkCalendar, getCalendar, getCorrections, getGoalProgress, getGoals, getPeriods, getSettings,
+  pickFile, removeCalendar, restoreCalendar, saveCalendar, saveCorrections, saveGoals, saveSettings,
+  type PickedFile,
+} from "./lib/api";
+import { previousRange, totals, type Ctx } from "./lib/aggregate";
+import { fmtDay, fmtRange } from "./lib/format";
+import { useRoute, type Page } from "./lib/router";
+import { todayIn } from "./lib/time";
+import { useTheme, type Theme } from "./lib/theme";
+import type {
+  Analysis, Block, CalendarCheck, CalendarState, Correction, Goal, GoalsProgress, Period, PeriodPreset, Settings,
+} from "./lib/types";
+
+function periodFromUrl(): Period {
+  const q = new URLSearchParams(window.location.search);
+  const start = q.get("start");
+  const end = q.get("end");
+  return start && end ? { start, end } : { preset: q.get("period") ?? "1m" };
+}
+
+function periodToUrl(period: Period) {
+  const q = "preset" in period ? `?period=${period.preset}` : `?start=${period.start}&end=${period.end}`;
+  window.history.replaceState(null, "", `${q}${window.location.hash}`);
+}
+
+const WARNING_TEXT: Record<string, (w: { current: number | string; new: number | string }) => string> = {
+  shorter_span: (w) => `it covers ${w.new} days, against ${w.current} in the current file`,
+  ends_earlier: (w) => `it ends on ${w.new}, before the current file (${w.current})`,
+  few_known_categories: (w) => `${Math.round(Number(w.new) * 100)}% of its titles have a known category (yours: ${Math.round(Number(w.current) * 100)}%)`,
+};
+
+export default function App() {
+  const [page, setPage] = useRoute();
+  const [theme, toggleTheme] = useTheme();
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [source, setSource] = useState("");
+  const [presets, setPresets] = useState<PeriodPreset[]>([]);
+  const [period, setPeriod] = useState<Period>(periodFromUrl);
+  const [calendar, setCalendar] = useState<CalendarState | null>(null);
+  const [welcomeStep, setWelcomeStep] = useState<1 | 2>(1);
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [previous, setPrevious] = useState<Analysis | null>(null);
+  const [noPrevious, setNoPrevious] = useState<string | null>(null);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [goalsPath, setGoalsPath] = useState("");
+  const [goalProgress, setGoalProgress] = useState<GoalsProgress | null>(null);
+  const [corrections, setCorrections] = useState<Correction[]>([]);
+  const [status, setStatus] = useState<"idle" | "loading" | "updating">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [drawer, setDrawer] = useState<{ title: string; blocks: Block[] } | null>(null);
+  const [customOpen, setCustomOpen] = useState("start" in period);
+  const [pending, setPending] = useState<{ file: PickedFile; check: CalendarCheck } | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [toast, setToast] = useState<{ message: string; undo?: boolean } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const inFlight = useRef<AbortController | null>(null);
+  const replaceInput = useRef<HTMLInputElement>(null);
+
+  const run = useCallback(async (which: Period, keepOld: boolean) => {
+    inFlight.current?.abort();
+    const controller = new AbortController();
+    inFlight.current = controller;
+    setStatus(keepOld ? "updating" : "loading");
+    try {
+      const fresh = await analyze(which, controller.signal);
+      setAnalysis(fresh);
+      setError(null);
+      const before = previousRange(fresh, "preset" in which ? which.preset : null);
+      if ("unavailable" in before) {
+        setPrevious(null);
+        setNoPrevious(before.calendarFirstDay
+          ? `No previous period: your calendar starts on ${fmtDay(before.calendarFirstDay)}.`
+          : "No previous period: the calendar file has no events.");
+      } else {
+        setNoPrevious(null);
+        setPrevious(await analyze({ start: before.start, end: before.end }, controller.signal));
+      }
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+      setError((e as Error).message);  // on error the previous results stay
+    }
+    if (inFlight.current === controller) setStatus("idle");
+  }, []);
+
+  const refreshGoals = useCallback(async (hasCalendar: boolean) => {
+    try {
+      const saved = await getGoals();
+      setGoals(saved.goals);
+      setGoalsPath(saved.path);
+      setGoalProgress(hasCalendar ? await getGoalProgress() : null);
+    } catch {
+      setGoalProgress(null);  // goals are a bonus on the page: never block the dashboard
+    }
+  }, []);
+
+  useEffect(() => {
+    getCorrections().then((saved) => setCorrections(saved.corrections)).catch(() => setCorrections([]));
+  }, []);
+
+  useEffect(() => {
+    Promise.all([getSettings(), getPeriods(), getCalendar()])
+      .then(([s, p, c]) => {
+        setSettings(s.settings); setSource(s.source); setPresets(p.presets); setCalendar(c);
+        if (c.calendar) run(periodFromUrl(), false);  // returning user: straight to the dashboard
+        refreshGoals(!!c.calendar);
+      })
+      .catch((e: ApiError) => setError(e.message));
+  }, [run, refreshGoals]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  // --- calendar file: first load, replace (with the wrong-file check), restore, remove -------
+
+  const firstLoad = async (f: File) => {
+    setStatus("loading");
+    try {
+      setCalendar(await saveCalendar(await pickFile(f)));
+      setError(null);
+      setWelcomeStep(2);
+      await refreshGoals(true);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setStatus("idle");
+  };
+
+  const swapIn = async (file: PickedFile) => {
+    setPending(null);
+    try {
+      setCalendar(await saveCalendar(file));
+      setToast({ message: `Loaded ${file.name}.`, undo: true });
+      await run(period, true);
+      await refreshGoals(true);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const replace = async (f: File) => {
+    try {
+      const file = await pickFile(f);
+      const check = await checkCalendar(file);
+      if (check.warnings.length) setPending({ file, check });
+      else await swapIn(file);
+    } catch (e) {
+      setError((e as Error).message);  // the current file and results stay
+    }
+  };
+
+  const undo = async () => {
+    setToast(null);
+    setCalendar(await restoreCalendar());
+    await run(period, true);
+    await refreshGoals(true);
+  };
+
+  const remove = async () => {
+    setConfirmRemove(false);
+    setCalendar(await removeCalendar());
+    setAnalysis(null);
+    setPrevious(null);
+    setGoalProgress(null);
+    setWelcomeStep(1);
+    setPage("overview");
+  };
+
+  // Dropping an .ics anywhere replaces the calendar (ux-v2 shell.md).
+  useEffect(() => {
+    if (!calendar?.calendar) return;
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+    const over = (e: DragEvent) => { if (hasFiles(e)) { e.preventDefault(); setDragging(true); } };
+    const leave = (e: DragEvent) => { if (!e.relatedTarget) setDragging(false); };
+    const drop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      setDragging(false);
+      const f = e.dataTransfer?.files[0];
+      if (f) replace(f);
+    };
+    window.addEventListener("dragover", over);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("drop", drop);
+    return () => { window.removeEventListener("dragover", over); window.removeEventListener("dragleave", leave); window.removeEventListener("drop", drop); };
+  });
+
+  // --- period and settings ----------------------------------------------------------------------
+
+  const choosePeriod = (next: Period) => {
+    setPeriod(next);
+    periodToUrl(next);
+    if (calendar?.calendar) run(next, true);
+  };
+
+  const onSaveGoals = async (next: Goal[]): Promise<string[] | null> => {
+    try {
+      const saved = await saveGoals(next);
+      setGoals(saved.goals);
+      setGoalsPath(saved.path);
+      setGoalProgress(calendar?.calendar ? await getGoalProgress() : null);
+      return null;
+    } catch (e) {
+      const err = e as ApiError;
+      return err.problems?.length ? err.problems : [err.message];
+    }
+  };
+
+  const onSaveCorrections = async (next: Correction[]): Promise<string[] | null> => {
+    try {
+      const saved = await saveCorrections(next);
+      setCorrections(saved.corrections);
+      if (calendar?.calendar) await run(period, true);
+      await refreshGoals(!!calendar?.calendar);
+      return null;
+    } catch (e) {
+      const err = e as ApiError;
+      return err.problems?.length ? err.problems : [err.message];
+    }
+  };
+
+  const onSaveSettings = async (next: Settings): Promise<string[] | null> => {
+    try {
+      const saved = await saveSettings(next);
+      setSettings(saved.settings);
+      setSource(saved.source);
+      if (calendar?.calendar) await run(period, true);
+      await refreshGoals(!!calendar?.calendar);  // week_start and categories change how goals are judged
+      return null;
+    } catch (e) {
+      const err = e as ApiError;
+      return err.problems?.length ? err.problems : [err.message];
+    }
+  };
+
+  const confirmWeek = async (next: Settings): Promise<string[] | null> => {
+    const problems = JSON.stringify(next) === JSON.stringify(settings) ? null : await onSaveSettings(next);
+    if (!problems) await run(period, false);
+    return problems;
+  };
+
+  const ctx: Ctx | null = useMemo(() => {
+    if (!analysis || !settings) return null;
+    const tz = analysis.range.timezone;
+    const asOf = calendar?.calendar?.data_as_of;
+    return { analysis, settings, today: todayIn(tz), dataAsOf: asOf ? todayIn(tz, new Date(asOf)) : null };
+  }, [analysis, settings, calendar]);
+  const previousCtx: Ctx | null = useMemo(
+    () => (previous && settings && ctx ? { ...ctx, analysis: previous } : null),
+    [previous, settings, ctx],
+  );
+  const issueCount = ctx ? totals(ctx).issues : 0;
+  const hasCalendar = !!calendar?.calendar;
+
+  if (!settings && !error) return <main className="faint">Connecting to the Time Analyzer server…</main>;
+  if (!hasCalendar || (welcomeStep === 2 && !analysis)) {
+    if (page === "settings" && settings) {
+      return <><TopBar page={page} setPage={setPage} hasData={false} issues={0} theme={theme} onTheme={toggleTheme} /><main><SettingsPage settings={settings} source={source} onSave={onSaveSettings} goals={goals} goalsPath={goalsPath} onSaveGoals={onSaveGoals} /></main></>;
+    }
+    return <Welcome step={hasCalendar ? 2 : 1} settings={settings} folder={calendar?.folder ?? ""} loading={status === "loading" ? "your calendar" : null}
+      error={error} onFile={firstLoad} onConfirm={confirmWeek} />;
+  }
+
+  const slot = (
+    <CalendarSlot state={calendar!} onReplace={() => replaceInput.current?.click()} onRemove={() => setConfirmRemove(true)}
+      onRestore={undo} />
+  );
+  return (
+    <>
+      <TopBar page={page} setPage={setPage} hasData issues={issueCount} slot={slot} theme={theme} onTheme={toggleTheme} />
+      <input ref={replaceInput} type="file" accept=".ics,text/calendar" hidden aria-label="Replace calendar file" onChange={(e) => { const f = e.target.files?.[0]; if (f) replace(f); e.target.value = ""; }} />
+      {ctx ? (
+        <>
+          <ContextLine ctx={ctx} period={period} presets={presets} customOpen={customOpen} status={status}
+            onCustom={setCustomOpen} onPeriod={choosePeriod} />
+          <main className={status === "updating" ? "updating" : ""}>
+            {error && <div className="notice error" role="alert">{error}</div>}
+            {page === "overview" && <Overview ctx={ctx} previous={previousCtx} noPrevious={noPrevious}
+              goals={goalProgress} periodLabel={periodLabelOf(period, presets, customOpen)} onOpenSettings={() => setPage("settings")}
+              onShowBlocks={(title, blocks) => setDrawer({ title, blocks })}
+              onUsePreset={(p) => { setCustomOpen(false); choosePeriod({ preset: p }); }} />}
+            {page === "rhythm" && <Rhythm ctx={ctx} onShowBlocks={(title, blocks) => setDrawer({ title, blocks })}
+              onUsePreset={(p) => { setCustomOpen(false); choosePeriod({ preset: p }); }} />}
+            {page === "quality" && <DataQuality ctx={ctx} onOpenSettings={() => setPage("settings")}
+              corrections={corrections} onSaveCorrections={onSaveCorrections} onSaveSettings={onSaveSettings} />}
+            {page === "settings" && <SettingsPage settings={settings!} source={source} onSave={onSaveSettings} goals={goals} goalsPath={goalsPath} onSaveGoals={onSaveGoals} />}
+          </main>
+        </>
+      ) : (
+        <main>{error ? <div className="notice error" role="alert">{error}</div> : <p className="faint">Reading {calendar!.calendar!.name}…</p>}</main>
+      )}
+      {drawer && <BlocksDrawer title={drawer.title} blocks={drawer.blocks} onClose={() => setDrawer(null)} onIssue={() => { setDrawer(null); setPage("quality"); }} />}
+      {pending && (
+        <Sheet title="This file looks different" actions={<>
+          <button className="btn primary" onClick={() => setPending(null)}>Cancel</button>
+          <button className="btn" onClick={() => swapIn(pending.file)}>Replace anyway</button>
+        </>}>
+          <p>{pending.file.name} may be a different calendar than {pending.check.current?.name}:</p>
+          <ul>{pending.check.warnings.map((w) => <li key={w.code}>{WARNING_TEXT[w.code]?.(w) ?? w.code}</li>)}</ul>
+          {pending.check.new.first_day && pending.check.new.last_day && <p className="faint small">It covers {fmtRange(pending.check.new.first_day, pending.check.new.last_day)}, {pending.check.new.events} events.</p>}
+        </Sheet>
+      )}
+      {confirmRemove && (
+        <Sheet title={`Remove ${calendar!.calendar!.name} from this computer?`} actions={<>
+          <button className="btn primary" onClick={() => setConfirmRemove(false)}>Cancel</button>
+          <button className="btn" onClick={remove}>Remove</button>
+        </>}>
+          <p>Your settings stay. You can load a calendar again at any time.</p>
+        </Sheet>
+      )}
+      {dragging && <div className="dropzone"><div>Release to replace {calendar!.calendar!.name}</div></div>}
+      {toast && <Toast message={toast.message} action={toast.undo ? "Undo" : undefined} onAction={undo} />}
+    </>
+  );
+}
+
+/** The five periods on the bar itself (new-ui); the rest are under More. Ids follow backend/periods.py. */
+const SEGMENTS: [string, string][] = [
+  ["this_week", "This week"], ["this_month", "This month"], ["1w", "7 days"], ["1m", "30 days"], ["3m", "90 days"],
+];
+
+/** The band heading for the chosen period: the preset's own label, or "Custom range". */
+function periodLabelOf(period: Period, presets: PeriodPreset[], customOpen: boolean): string {
+  if (customOpen || !("preset" in period)) return "Custom range";
+  return presets.find((p) => p.id === period.preset)?.label ?? "This period";
+}
+
+function ContextLine({ ctx, period, presets, customOpen, status, onCustom, onPeriod }: {
+  ctx: Ctx; period: Period; presets: PeriodPreset[]; customOpen: boolean; status: string;
+  onCustom: (open: boolean) => void; onPeriod: (p: Period) => void;
+}) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const closeMore = useCallback(() => setMoreOpen(false), []);
+  useDismiss(moreOpen, closeMore, ref);
+  const { range } = ctx.analysis;
+  const dayCount = Math.round((Date.parse(range.last_day) - Date.parse(range.first_day)) / 86_400_000) + 1;
+  const current = customOpen || !("preset" in period) ? "custom" : period.preset;
+  const segments = SEGMENTS.filter(([id]) => presets.some((p) => p.id === id));
+  const onBar = segments.some(([id]) => id === current);
+  const moreLabel = onBar ? "More" : current === "custom" ? "Custom range" : presets.find((p) => p.id === current)?.label ?? "More";
+  const pastExport = ctx.dataAsOf && ctx.dataAsOf < range.last_day;
+  const choose = (preset: string) => { setMoreOpen(false); onCustom(false); onPeriod({ preset }); };
+  return (
+    <div className="context" ref={ref}>
+      <div className="seg" role="group" aria-label="Period">
+        {segments.map(([id, label]) => (
+          <button key={id} type="button" aria-pressed={current === id} onClick={() => choose(id)}>{label}</button>
+        ))}
+        <button type="button" aria-pressed={!onBar} aria-expanded={moreOpen} onClick={() => setMoreOpen(!moreOpen)}>
+          {moreLabel} <span className="caret">▾</span>
+        </button>
+      </div>
+      {moreOpen && (
+        <div className="periods" role="dialog" aria-label="More periods">
+          {(["calendar", "rolling"] as const).map((kind) => (
+            <div key={kind}>
+              <div className="eyebrow">{kind === "calendar" ? "Calendar" : "Rolling (up to today)"}</div>
+              <div className="grid2">
+                {presets.filter((p) => p.kind === kind).map((p) => (
+                  <button key={p.id} type="button" aria-pressed={current === p.id} onClick={() => choose(p.id)}>{p.label}</button>
+                ))}
+              </div>
+            </div>
+          ))}
+          <div className="custom-link">
+            <button type="button" onClick={() => { setMoreOpen(false); onCustom(true); }}>Custom range…</button>
+          </div>
+        </div>
+      )}
+      {customOpen && <CustomRange initial={"start" in period ? period : { start: range.first_day, end: range.last_day }} onApply={onPeriod} />}
+      <div className="facts">
+        <span className="range">{fmtRange(range.first_day, range.last_day)}</span>
+        <span className="sep">·</span><span>{dayCount} days</span>
+        <span className="sep">·</span><span>{range.timezone}</span>
+        <span className="sep">·</span><span>week starts {range.week_start.slice(0, 3)}</span>
+        {ctx.today >= range.first_day && ctx.today <= range.last_day && <><span className="sep">·</span><span>today in progress</span></>}
+        {pastExport && <><span className="sep">·</span><span className="strong">data as of {fmtDay(ctx.dataAsOf!)}: later days are not in this file</span></>}
+        {status === "updating" && <span className="busy">Updating…</span>}
+      </div>
+    </div>
+  );
+}
+
+function TopBar({ page, setPage, hasData, issues, slot, theme, onTheme }: {
+  page: Page; setPage: (p: Page) => void; hasData: boolean; issues: number; slot?: ReactNode;
+  theme: Theme; onTheme: () => void;
+}) {
+  const themeLabel = theme === "dark" ? "Switch to light" : "Switch to dark";
+  return (
+    <header className="topbar">
+      <span className="brand">Time Analyzer</span>
+      {hasData && (
+        <nav className="nav" aria-label="Main">
+          {([["overview", "Overview"], ["rhythm", "Rhythm"]] as const).map(([id, label]) => (
+            <button key={id} aria-current={page === id ? "page" : undefined} onClick={() => setPage(id)}>{label}</button>
+          ))}
+        </nav>
+      )}
+      <div className="right">
+        {slot}
+        {hasData && (
+          <button className="ghost" aria-label={issues > 0 ? `Data quality: ${issues} to check` : "Data quality"}
+            aria-current={page === "quality" ? "page" : undefined} onClick={() => setPage("quality")}>
+            <span className="wide-only">Data quality</span>
+            {issues > 0 && <><span className="glyph-warn">△</span><span className="count">{issues}</span></>}
+          </button>
+        )}
+        <button className="iconbtn" aria-label={themeLabel} title={themeLabel} onClick={onTheme}><span className="theme-glyph" /></button>
+        <button className="iconbtn" aria-label="Settings" aria-current={page === "settings" ? "page" : undefined}
+          onClick={() => setPage(page === "settings" && hasData ? "overview" : "settings")}>⚙</button>
+      </div>
+    </header>
+  );
+}
+
+function CustomRange({ initial, onApply }: { initial: { start: string; end: string }; onApply: (p: Period) => void }) {
+  const [start, setStart] = useState(initial.start);
+  const [end, setEnd] = useState(initial.end);
+  const valid = start && end && start <= end;
+  return (
+    <div className="custom">
+      <input className="input" type="date" aria-label="Start date" value={start} onChange={(e) => setStart(e.target.value)} />
+      <span className="faint">–</span>
+      <input className="input" type="date" aria-label="End date" value={end} onChange={(e) => setEnd(e.target.value)} />
+      <button className="btn primary" disabled={!valid} onClick={() => onApply({ start, end })}>Apply</button>
+      {!valid && <span className="small" style={{ color: "var(--error)" }}>End must be on or after start.</span>}
+    </div>
+  );
+}

@@ -1,5 +1,9 @@
-streamlit
-pandas
-plotly
-icalendar
-pytz
+pandas==2.3.1
+icalendar==6.3.1
+recurring-ical-events==3.8.2
+pytest==9.1.1
+pyyaml==6.0.3
+hypothesis==6.170.13
+fastapi==0.162.0
+uvicorn==0.54.0
+httpx==0.28.1
