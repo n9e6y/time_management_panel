@@ -131,8 +131,6 @@ def create_app(root: Path = config.ROOT_DIR, today: Callable[[ZoneInfo], date] =
         payload["goals"] = [goals_module.progress_to_dict(item) for item in measured]
         return payload
 
-    _serve_frontend(app, root / "frontend" / "dist")
-
     def calendar_response() -> dict:
         info = calendars.info()
         return {"calendar": asdict(info) if info else None, "has_previous": calendars.has_previous(),
@@ -203,6 +201,7 @@ def create_app(root: Path = config.ROOT_DIR, today: Callable[[ZoneInfo], date] =
         response.headers["X-Analysis-Cache"] = "miss"
         return payload
 
+    _serve_frontend(app, root / "frontend" / "dist")  # last: its catch-all would shadow the routes above
     return app
 
 

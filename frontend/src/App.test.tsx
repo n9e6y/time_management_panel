@@ -352,3 +352,21 @@ describe("goals (Stage 4)", () => {
     await waitFor(() => expect(calls.filter((c) => c.url === "/api/goals/progress").length).toBeGreaterThan(before));
   });
 });
+
+describe("when a startup request fails", () => {
+  /** The page must say what went wrong; a stuck "Connecting…" hides the reason. */
+  it("shows the reason instead of staying on 'Connecting'", async () => {
+    mockServer(saved(INFO), { "GET /api/calendar": () => json({ detail: "Not found." }, 404) });
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not found.");
+    expect(screen.queryByText(/Connecting to the Time Analyzer server/)).not.toBeInTheDocument();
+  });
+
+  it("says how to start the server when no request gets through", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))));
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/isn't running/);
+  });
+});

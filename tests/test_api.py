@@ -423,6 +423,25 @@ def test_the_api_still_wins_and_unknown_api_routes_stay_errors(built, root):
     assert "id=root" not in client.get("/api/nope").text
 
 
+def test_serving_the_frontend_shadows_no_api_route(built, root):
+    """The catch-all page route must be registered last, or it swallows the routes declared after it."""
+    app = create_app(root=root, today=lambda tz: date(2025, 9, 8))
+    client = TestClient(app)
+
+    api = [r for r in app.routes if getattr(r, "path", "").startswith("/api/")]
+    catch_all = [i for i, r in enumerate(app.routes) if "{path:path}" in getattr(r, "path", "")]
+    assert catch_all, "the page fallback should be mounted"
+    assert max(app.routes.index(r) for r in api) < catch_all[0]
+
+    # Every GET route answers as itself, not with the app page.
+    for route in api:
+        if "GET" not in (getattr(route, "methods", None) or set()):
+            continue
+        res = client.get(route.path)
+        assert res.status_code != 404, route.path
+        assert "id=root" not in res.text, route.path
+
+
 def test_a_path_cannot_escape_the_built_folder(built, root):
     client = TestClient(create_app(root=root, today=lambda tz: date(2025, 9, 8)))
     (root / "config.example.yaml").exists()
