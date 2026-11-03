@@ -36,3 +36,14 @@ export function fmtRange(first: string, last: string): string {
 export function fmtBytes(bytes: number): string {
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
+
+/** `23:30` from decimal hours; wraps past midnight (25.5 -> `01:30`). */
+export function fmtClock(hours: number): string {
+  const minutes = Math.round(((hours % 24) + 24) % 24 * 60);
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+/** `+6.5 h` / `−2.0 h`, with a real minus sign. */
+export function fmtSigned(hours: number): string {
+  return `${hours < 0 ? "−" : "+"}${Math.abs(hours).toFixed(1)}${THIN}h`;
+}

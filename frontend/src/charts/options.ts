@@ -1,14 +1,17 @@
 // ECharts options for each chart, following tokens.md §5. They only shape data that aggregate.ts computed.
 import type { EChartsOption } from "echarts";
 import {
-  KIND_LABEL, SLOT_MINUTES, UNLOGGED, type AverageDayRow, type CategoryRow, type CoverageDay, type DayProbability,
-  type SubcategoryRow, type WeekdayHeatmap,
+  DELTA_ARROW_HOURS, KIND_LABEL, NIGHT_START_HOUR, OTHER, SLOT_MINUTES, UNLOGGED, type AverageDayRow, type BarcodeDay, type CategoryRow,
+  type CoverageDay, type DayProbability, type MixOverTime, type Nights, type SubcategoryRow, type WeekdayHeatmap,
 } from "../lib/aggregate";
-import { fmtDay, fmtHM, fmtHours, fmtPct } from "../lib/format";
+import { fmtClock, fmtDay, fmtHM, fmtHours, fmtPct, fmtSigned } from "../lib/format";
 import { colorVar, type Palette } from "../lib/theme";
 import type { Settings } from "../lib/types";
 
 const PI = Math.PI;
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** Legend and stack name for time after "data as of" or still to come. */
+export const NOT_YET = "Not yet";
 
 function base(p: Palette) {
   const { token } = p;
@@ -39,13 +42,15 @@ function legend(keys: string[], p: Palette) {
 
 // --- O1 ---------------------------------------------------------------------------------------
 
-export function categoryBars(rows: CategoryRow[], settings: Settings, selected: string | null) {
+/** `comparable` is true when a previous period exists: rows then carry a Δ, or "—" when one is missing. */
+export function categoryBars(rows: CategoryRow[], settings: Settings, selected: string | null,
+                            comparable = false) {
   return (p: Palette): EChartsOption => {
     const b = base(p);
     const names = rows.map((r) => (r.kind === "category" ? r.label : `${r.label} · ${KIND_LABEL[r.kind]}`));
     return {
       textStyle: b.textStyle, tooltip: { ...b.tooltip, trigger: "item" },
-      grid: { left: 8, right: 150, top: 4, bottom: 4, containLabel: true },
+      grid: { left: 8, right: comparable ? 220 : 150, top: 4, bottom: 4, containLabel: true },
       xAxis: { type: "value", show: false },
       yAxis: {
         type: "category", inverse: true, data: names, axisLine: { show: false }, axisTick: { show: false },
@@ -63,9 +68,29 @@ export function categoryBars(rows: CategoryRow[], settings: Settings, selected: 
         })),
         label: {
           show: true, position: "right", color: p.token("text-2"), fontSize: 12,
-          formatter: (x) => { const r = rows[x.dataIndex]; return `${fmtHours(r.hours)}  ·  ${fmtPct(r.share)}  ·  ${fmtHM(r.perDay)}/day`; },
+          rich: {
+            n: { width: 140, align: "right", color: p.token("text-2") },
+            d: { width: 64, align: "right", color: p.token("text-2") },
+            up: { width: 64, align: "right", color: p.token("text") },
+            down: { width: 64, align: "right", color: p.token("text") },
+            none: { width: 64, align: "right", color: p.token("text-3") },
+          },
+          formatter: (x) => {
+            const r = rows[x.dataIndex];
+            const numbers = `{n|${fmtHours(r.hours)}  ·  ${fmtPct(r.share)}  ·  ${fmtHM(r.perDay)}/day}`;
+            if (r.delta === undefined) return comparable ? `${numbers}{none|—}` : numbers;
+            const arrow = Math.abs(r.delta) >= DELTA_ARROW_HOURS ? (r.delta > 0 ? " ▲" : " ▼") : "";
+            const style = Math.abs(r.delta) >= DELTA_ARROW_HOURS ? (r.delta > 0 ? "up" : "down") : "none";
+            return `${numbers}{${style}|${fmtSigned(r.delta)}${arrow}}`;
+          },
         },
-        tooltip: { formatter: (x) => { const r = rows[(x as { dataIndex: number }).dataIndex]; return `<b>${r.label}</b><br/>${fmtHM(r.hours)} · ${fmtPct(r.share)} of the period`; } },
+        tooltip: {
+          formatter: (x) => {
+            const r = rows[(x as { dataIndex: number }).dataIndex];
+            const previous = r.delta === undefined ? "" : `<br/>previous period: ${fmtHM(r.hours - r.delta)}`;
+            return `<b>${r.label}</b><br/>${fmtHM(r.hours)} · ${fmtPct(r.share)} of the period${previous}`;
+          },
+        },
       }],
     };
   };
@@ -196,6 +221,243 @@ export function coverageCalendar(days: CoverageDay[], weekStart: string) {
         })),
         label: { show: true, fontSize: 11, color: p.token("text"), formatter: (x) => { const d = days.find((c) => c.day === (x.value as [string, number])[0])!; return d.notInFile ? "not in file" : d.today ? "today" : d.partial ? "as of" : `${Math.round(d.share * 100)}%`; } },
       }],
+    };
+  };
+}
+
+// ==============================================================================================
+// Stage 3.5 Part B
+// ==============================================================================================
+
+/** Dotted outline, no fill: "not in this file" or "not yet" (tokens.md §1). */
+function notYetStyle(p: Palette) {
+  return { color: "transparent", borderColor: p.token("nif-edge"), borderWidth: 1, borderType: [1, 3] as [number, number] };
+}
+
+// --- O3: how has my time changed over the period? ---------------------------------------------
+
+/** Day buckets label only the week starts and the last bar; week and month buckets label each. */
+function bucketLabels(mix: MixOverTime): string[] {
+  return mix.buckets.map((b, i) => {
+    if (mix.kind === "month") return `${MONTH_NAMES[Number(b.key.slice(5, 7)) - 1]} ${b.key.slice(0, 4)}`;
+    if (mix.kind === "week") return fmtDay(b.key);
+    return b.weekStart || i === mix.buckets.length - 1 ? fmtDay(b.key) : "";
+  });
+}
+
+export function mixBars(mix: MixOverTime, settings: Settings, category: string | null) {
+  return (p: Palette): EChartsOption => {
+    const b = base(p);
+    const keys = mix.buckets[0].hours.map((h) => h.key);
+    const marks = mix.buckets.map((x) => (x.dayOff ? "off" : x.partial ? "part" : ""));
+    const bucketWord = mix.kind === "day" ? "day" : mix.kind === "week" ? "week of" : "";
+    return {
+      textStyle: b.textStyle,
+      tooltip: {
+        ...b.tooltip, trigger: "axis", axisPointer: { type: "shadow" }, valueFormatter: (v) => fmtHM(Number(v)),
+        formatter: undefined,
+      },
+      legend: { ...legend(category ? keys : [...keys, NOT_YET], p), top: 0 },
+      grid: { left: 8, right: 16, top: 32, bottom: 26, containLabel: true },
+      xAxis: [
+        {
+          type: "category", data: bucketLabels(mix), axisTick: { show: false }, axisLine: b.axisLine,
+          axisLabel: { ...b.axisLabel, interval: 0, hideOverlap: true },
+        },
+        {
+          type: "category", data: marks, position: "bottom", offset: 18, axisLine: { show: false },
+          axisTick: { show: false }, axisLabel: { color: p.token("text-3"), fontSize: 10, interval: 0, hideOverlap: true },
+        },
+      ],
+      yAxis: {
+        type: "value", max: category ? undefined : 24, interval: category ? undefined : 6,
+        axisLabel: { ...b.axisLabel, formatter: "{value} h" }, splitLine: b.splitLine,
+      },
+      series: [
+        ...keys.map((key, index) => ({
+          type: "bar" as const, name: key, stack: "mix", barMaxWidth: 36, emphasis: { focus: "series" as const },
+          itemStyle: fill(key, settings, p),
+          ...(category && index === 0 && mix.average !== null
+            ? {
+              markLine: {
+                silent: true, symbol: "none",
+                lineStyle: { color: p.token("text-2"), type: "dashed" as const, width: 1 },
+                label: { formatter: `average ${fmtHours(mix.average)}/day`, color: p.token("text-2"), fontSize: 12 },
+                data: [{ yAxis: mix.average }],
+              },
+            }
+            : {}),
+          data: mix.buckets.map((bucket) => bucket.hours.find((h) => h.key === key)!.hours),
+        })),
+        ...(category ? [] : [{
+          type: "bar" as const, name: NOT_YET, stack: "mix", barMaxWidth: 36,
+          itemStyle: notYetStyle(p),
+          data: mix.buckets.map((bucket) => bucket.notYet || null),
+        }]),
+      ],
+      aria: { enabled: true, label: { description: `Average hours per ${bucketWord || "month"} bucket` } },
+    };
+  };
+}
+
+// --- R4: when do I sleep, and how regular is it? ----------------------------------------------
+
+/** Rows are nights; the x axis is hours after 18:00, so a night is one unbroken bar. */
+export function sleepActogram(data: Nights, settings: Settings) {
+  return (p: Palette): EChartsOption => {
+    const b = base(p);
+    const rows = data.nights.map((n) => `${fmtDay(n.day)}${n.dayOff ? " · off" : ""}`);
+    const bars = data.nights.flatMap((n, y) => n.bars.map((bar) => ({
+      value: [y, bar.from, bar.to, bar.main ? 1 : 0, n.incomplete ? 1 : 0] as number[],
+      night: n.day,
+    })));
+    const median = (at: number | null, text: string) =>
+      (at === null ? [] : [{
+        xAxis: at,
+        label: { formatter: text, color: p.token("text-2"), fontSize: 12, position: "insideEndTop" as const },
+      }]);
+    return {
+      textStyle: b.textStyle,
+      tooltip: {
+        ...b.tooltip,
+        formatter: (x) => {
+          const [, from, to] = (x as unknown as { value: number[] }).value;
+          const item = (x as unknown as { data: { night: string } }).data;
+          return `<b>Night of ${fmtDay(item.night)}</b><br/>${fmtClock(NIGHT_START_HOUR + from)}–`
+            + `${fmtClock(NIGHT_START_HOUR + to)} · ${fmtHM(to - from)}`;
+        },
+      },
+      grid: { left: 8, right: 24, top: 24, bottom: 8, containLabel: true },
+      xAxis: {
+        type: "value", min: 0, max: 24, interval: 3, position: "top",
+        axisLabel: { ...b.axisLabel, formatter: (v: number) => fmtClock(NIGHT_START_HOUR + v) },
+        axisLine: b.axisLine, splitLine: b.splitLine,
+      },
+      yAxis: {
+        type: "category", inverse: true, data: rows, axisTick: { show: false }, axisLine: { show: false },
+        axisLabel: { color: p.token("text-2"), fontSize: 11, interval: rows.length > 60 ? "auto" : 0 },
+      },
+      series: [
+        {
+          type: "custom", name: "Day off", silent: true,
+          renderItem: (_params, api) => {
+            const y = api.value(0) as number;
+            if (!data.nights[y]?.dayOff) return undefined as unknown as never;
+            const size = api.size!([0, 1]) as number[];
+            const left = api.coord([0, y]) as number[];
+            const right = api.coord([24, y]) as number[];
+            return {
+              type: "rect",
+              shape: { x: left[0], y: left[1] - size[1] / 2, width: right[0] - left[0], height: size[1] },
+              style: { fill: p.token("surface-2") },
+            };
+          },
+          data: data.nights.map((_n, y) => ({ value: [y] })),
+        },
+        {
+          type: "custom", name: "Sleep",
+          renderItem: (_params, api) => {
+            const y = api.value(0) as number;
+            const from = api.value(1) as number;
+            const to = api.value(2) as number;
+            const main = api.value(3) === 1;
+            const incomplete = api.value(4) === 1;
+            const start = api.coord([from, y]) as number[];
+            const end = api.coord([to, y]) as number[];
+            const size = api.size!([0, 1]) as number[];
+            const height = size[1] * (main ? 0.6 : 0.3);
+            return {
+              type: "rect",
+              shape: { x: start[0], y: start[1] - height / 2, width: Math.max(1, end[0] - start[0]), height },
+              style: incomplete ? notYetStyle(p) as unknown as Record<string, unknown>
+                : { fill: p.token(colorVar(data.category ?? OTHER, settings)) },
+            };
+          },
+          encode: { x: [1, 2], y: 0 },
+          data: bars,
+          markLine: {
+            silent: true, symbol: "none",
+            lineStyle: { color: p.token("text-2"), type: "dashed", width: 1 },
+            data: [
+              ...median(data.medians.bedtime, `median bedtime ${fmtClock(NIGHT_START_HOUR + (data.medians.bedtime ?? 0))}`),
+              ...median(data.medians.wake, `median wake ${fmtClock(NIGHT_START_HOUR + (data.medians.wake ?? 0))}`),
+            ],
+          },
+        },
+      ],
+      aria: { enabled: true, label: { description: `${data.withSleep} nights of sleep on an 18:00 to 18:00 axis` } },
+    };
+  };
+}
+
+// --- R5: how did my days look across months? --------------------------------------------------
+
+/** One thin 24-hour column per day: the shape of months, not a chart to read values from. */
+export function lifeBarcode(days: BarcodeDay[], settings: Settings) {
+  return (p: Palette): EChartsOption => {
+    const b = base(p);
+    const labels = days.map((d) => (d.day.endsWith("-01")
+      ? `${MONTH_NAMES[Number(d.day.slice(5, 7)) - 1]}` : ""));
+    const parts = days.flatMap((d, x) => d.parts.map((part) => ({ value: [x, part.from, part.to], key: part.key, day: d.day })));
+    return {
+      textStyle: b.textStyle,
+      tooltip: {
+        ...b.tooltip,
+        formatter: (x) => {
+          const item = (x as unknown as { data: { day: string; key: string } }).data;
+          const day = days.find((d) => d.day === item.day)!;
+          return `<b>${fmtDay(day.day)}</b>${day.dayOff ? " · day off" : ""}<br/>${item.key}<br/>${fmtHM(day.logged)} logged`;
+        },
+      },
+      grid: { left: 8, right: 16, top: 8, bottom: 8, containLabel: true },
+      xAxis: {
+        type: "category", data: labels, axisTick: { show: false }, axisLine: b.axisLine,
+        axisLabel: { ...b.axisLabel, interval: 0, hideOverlap: true },
+      },
+      yAxis: {
+        type: "value", min: 0, max: 24, interval: 6, inverse: true,
+        axisLabel: { ...b.axisLabel, formatter: (v: number) => fmtClock(v) }, splitLine: b.splitLine,
+      },
+      series: [
+        {
+          type: "custom", name: "Day off", silent: true,
+          renderItem: (_params, api) => {
+            const x = api.value(0) as number;
+            const day = days[x];
+            if (!day || (!day.dayOff && !day.notInFile)) return undefined as unknown as never;
+            const size = api.size!([1, 0]) as number[];
+            const top = api.coord([x, 0]) as number[];
+            const bottom = api.coord([x, 24]) as number[];
+            return {
+              type: "rect",
+              shape: { x: top[0] - size[0] / 2, y: top[1], width: size[0], height: bottom[1] - top[1] },
+              style: day.notInFile ? notYetStyle(p) as unknown as Record<string, unknown> : { fill: p.token("surface-2") },
+            };
+          },
+          data: days.map((_d, x) => ({ value: [x] })),
+        },
+        {
+          type: "custom", name: "Logged",
+          renderItem: (params, api) => {
+            const x = api.value(0) as number;
+            const from = api.value(1) as number;
+            const to = api.value(2) as number;
+            const key = (parts[params.dataIndex] ?? { key: OTHER }).key;
+            const size = api.size!([1, 0]) as number[];
+            const top = api.coord([x, from]) as number[];
+            const end = api.coord([x, to]) as number[];
+            const width = Math.max(1, size[0] - (days.length <= 92 ? 1 : 0));
+            return {
+              type: "rect",
+              shape: { x: top[0] - width / 2, y: top[1], width, height: Math.max(1, end[1] - top[1]) },
+              style: { fill: p.token(colorVar(key, settings)) },
+            };
+          },
+          encode: { x: 0, y: [1, 2] },
+          data: parts,
+        },
+      ],
+      aria: { enabled: true, label: { description: `${days.length} days, one column each` } },
     };
   };
 }

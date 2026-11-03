@@ -9,6 +9,7 @@
   --other: #8a8d93; --unlogged-fill: #eceae6; --unlogged-hatch: #c9c6bf; --unlogged-edge: #b4b1aa;
   --seq-0: #f1f2f3; --seq-1: #dde2e7; --seq-2: #c2cad3; --seq-3: #9eaab7; --seq-4: #77869a; --seq-5: #556579; --seq-6: #36455a;
   --warn: #9a6200; --error: #b42318; --ok: #2f6b2f; --nif-edge: #a3a19b;
+  --now: #18191b; --noise: #d9d7d2; --projection: #676a70; --spark: #4d5055; --spark-muted: #c4c2bc;
   --r-sm: 2px; --r-md: 4px; --r-lg: 6px;
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
@@ -23,6 +24,7 @@
     --other: #7a7d83; --unlogged-fill: #26282b; --unlogged-hatch: #45484d; --unlogged-edge: #55585d;
     --seq-0: #24272b; --seq-1: #2c3540; --seq-2: #374455; --seq-3: #4a5b70; --seq-4: #71849b; --seq-5: #8b9cb1; --seq-6: #b7c4d4;
     --warn: #e0a743; --error: #f07a70; --ok: #7cc47c; --nif-edge: #5e6167;
+    --now: #ecebe8; --noise: #3a3d41; --projection: #8f9298; --spark: #b6b8bd; --spark-muted: #45484d;
   }
 }
 :root[data-theme="dark"] {
@@ -35,6 +37,7 @@
   --other: #7a7d83; --unlogged-fill: #26282b; --unlogged-hatch: #45484d; --unlogged-edge: #55585d;
   --seq-0: #24272b; --seq-1: #2c3540; --seq-2: #374455; --seq-3: #4a5b70; --seq-4: #71849b; --seq-5: #8b9cb1; --seq-6: #b7c4d4;
   --warn: #e0a743; --error: #f07a70; --ok: #7cc47c; --nif-edge: #5e6167;
+  --now: #ecebe8; --noise: #3a3d41; --projection: #8f9298; --spark: #b6b8bd; --spark-muted: #45484d;
 }
 
 * { box-sizing: border-box; }
@@ -77,6 +80,11 @@ h1 { font-size: 20px; line-height: 28px; font-weight: 600; margin: 0 0 16px; }
 .card h2 { font-size: 15px; line-height: 22px; font-weight: 600; margin: 0; }
 .card .controls { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .card .caption { font-size: 12px; line-height: 16px; color: var(--text-3); margin-top: 8px; }
+.card .lede { font-size: 14px; line-height: 20px; color: var(--text); margin: -4px 0 12px; }
+.sectionlabel { font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-3); margin: 24px 0 8px; }
+.tile .ctx.prev { color: var(--text-3); margin-top: 2px; }
+.tiles.four { grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 16px 0 0; }
 .scroll { overflow-x: auto; }
 .segmented { display: inline-flex; background: var(--surface-2); border-radius: var(--r-md); padding: 2px; }
 .segmented button { height: 24px; border: 1px solid transparent; background: none; border-radius: var(--r-md); padding: 0 10px; cursor: pointer; font-size: 13px; color: var(--text-2); }
@@ -126,6 +134,10 @@ tr:hover td { background: var(--surface-2); }
 .catrow { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .catrow .name { flex: 1; }
 
+/* The mentor dock (Stage 9) narrows the page, so charts react to the page width, not the window. */
+main { container-type: inline-size; container-name: page; }
+@container page (max-width: 900px) { .grid { grid-template-columns: 1fr; } .span2 { grid-column: auto; } }
+@container page (max-width: 700px) { .tiles, .tiles.four { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 960px) { .grid { grid-template-columns: 1fr; } .span2 { grid-column: auto; } }
 @media (max-width: 700px) {
   .tiles { grid-template-columns: repeat(2, 1fr); }

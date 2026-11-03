@@ -12,8 +12,10 @@
 * **Correct calendar reading**: recurring events, moved and cancelled occurrences, timezones, daylight saving and
   midnight are all handled; all-day reminders are not counted as time.
 * **A title grammar for your log**: `CATEGORY: task #tag +project [score]`, e.g. `LEARN: calculus ch.4 #deep +exam-prep [4]`.
-* **Overview**: where your time went (with unlogged time shown), what each category was made of, your average day,
-  when in the day each activity happens, and which weekdays carry which activity.
+* **Overview**: where your time went (with unlogged time shown) and what grew or shrank against the period before,
+  what each category was made of, how the mix changed week by week, and which projects took your time.
+* **Rhythm**: your average day and whether days off differ, when in the day each activity happens, which weekdays
+  carry which activity, a sleep actogram with median bedtime and wake, and a life barcode of every day in the period.
 * **Data quality**: which days are fully logged, which titles need fixing, what was skipped and what overlaps.
 * **Settings in the app**: timezone, the day your week starts, your days off, categories (order, color, focus).
 * **Private by design**: everything runs on your computer; the calendar file is never saved.
@@ -89,6 +91,9 @@ curl -X POST "http://127.0.0.1:8000/api/analyze?period=this_week" \
      -H "Content-Type: text/calendar" --data-binary @my_calendar.ics
 ```
 
+Each page has its own address, so you can bookmark one: `/overview`, `/rhythm`, `/data-quality`, `/settings`, all
+with `?period=`.
+
 Periods: `1w 2w 1m 3m 6m 1y 2y 5y` (last N days), `this_week last_week this_month last_month this_year`
 (weeks follow your `week_start`), or `start=YYYY-MM-DD&end=YYYY-MM-DD`. Sent without a body, `/api/analyze` uses the
 saved calendar.
@@ -139,10 +144,10 @@ Tests use only the synthetic calendar in `tests/fixtures/` (see `tests/fixtures/
 │   └── runner.py          # command-line tool
 ├── frontend/
 │   └── src/
-│       ├── lib/           # API client, calculations behind each chart, formats
+│       ├── lib/           # API client, calculations behind each chart, takeaway lines, routes, formats
 │       ├── charts/        # ECharts options
 │       ├── components/    # shared UI pieces
-│       └── pages/         # Welcome, Overview, Data quality, Settings
+│       └── pages/         # Welcome, Overview, Rhythm, Data quality, Settings
 ├── tests/
 │   ├── fixtures/          # synthetic calendar + expected results
 │   └── test_*.py

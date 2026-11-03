@@ -1,7 +1,12 @@
 import type { ReactNode } from "react";
+import { colorVar } from "../lib/theme";
+import type { Settings } from "../lib/types";
 
-export function Card({ code, title, controls, caption, className, children }: {
-  code?: string; title: string; controls?: ReactNode; caption?: ReactNode; className?: string; children: ReactNode;
+export function Card({ code, title, lede, controls, caption, className, children }: {
+  code?: string; title: string;
+  /** The chart's answer in one sentence, computed from the same numbers (tokens.md `--fs-lede`). */
+  lede?: ReactNode;
+  controls?: ReactNode; caption?: ReactNode; className?: string; children: ReactNode;
 }) {
   return (
     <section className={`card ${className ?? ""}`} aria-label={title}>
@@ -10,19 +15,52 @@ export function Card({ code, title, controls, caption, className, children }: {
         <h2>{title}</h2>
         {controls && <div className="controls">{controls}</div>}
       </header>
+      {lede && <p className="lede">{lede}</p>}
       {children}
       {caption && <div className="caption">{caption}</div>}
     </section>
   );
 }
 
-export function StatTile({ label, value, unit, context }: { label: string; value: string; unit?: string; context?: ReactNode }) {
+/** DAY, WEEK, NIGHTS, MONTHS on Rhythm: small headings that help scanning, not tabs. */
+export function SectionLabel({ children }: { children: ReactNode }) {
+  return <h3 className="sectionlabel">{children}</h3>;
+}
+
+export function StatTile({ label, value, unit, context, previous }: {
+  label: string; value: string; unit?: string; context?: ReactNode;
+  /** "prev. 92%": the same number for the previous period, left out when there is none. */
+  previous?: ReactNode;
+}) {
   return (
     <div className="tile">
       <div className="label">{label}</div>
       <div className="value">{value}{unit && <span className="unit">{" "}{unit}</span>}</div>
       {context && <div className="ctx">{context}</div>}
+      {previous && <div className="ctx prev">prev. {previous}</div>}
     </div>
+  );
+}
+
+/** O4's category mix: one stacked bar per row, 10px high, in the same category colors (tokens.md §12). */
+export function MixBar({ parts, settings, width = 140 }: {
+  parts: { key: string; hours: number }[]; settings: Settings; width?: number;
+}) {
+  const total = parts.reduce((a, part) => a + part.hours, 0) || 1;
+  let x = 0;
+  return (
+    <svg width={width} height={10} role="img"
+      aria-label={parts.map((part) => `${part.key} ${part.hours.toFixed(1)} h`).join(", ")}>
+      {parts.map((part) => {
+        const w = (part.hours / total) * width;
+        const rect = (
+          <rect key={part.key} x={x} y={0} width={Math.max(1, w)} height={10} rx={1}
+            fill={`var(--${colorVar(part.key, settings)})`} />
+        );
+        x += w;
+        return rect;
+      })}
+    </svg>
   );
 }
 

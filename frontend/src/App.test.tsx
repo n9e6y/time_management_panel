@@ -47,7 +47,7 @@ const posts = (path: string) => calls.filter((c) => c.init?.method === "POST" &&
 async function returningUser(state: CalendarState = saved(INFO)) {
   mockServer(state);
   render(<App />);
-  await screen.findByText("Where did my time go?");
+  await screen.findByText("Where did my time go, and what grew or shrank?");
 }
 
 beforeEach(() => window.history.replaceState(null, "", "/"));
@@ -67,7 +67,7 @@ describe("first run", () => {
     expect(put.init!.body).toBeInstanceOf(ArrayBuffer);
 
     fireEvent.click(screen.getByRole("button", { name: "Looks right" }));
-    await screen.findByText("Where did my time go?");
+    await screen.findByText("Where did my time go, and what grew or shrank?");
     expect(calls.some((c) => c.init?.method === "PUT" && c.url === "/api/config")).toBe(false);  // nothing changed
     const logged = screen.getByText("Logged").closest(".tile")!;
     expect(within(logged as HTMLElement).getByText(/41\.0/)).toBeInTheDocument();
@@ -120,7 +120,7 @@ describe("replace, undo and remove", () => {
       }),
     });
     render(<App />);
-    await screen.findByText("Where did my time go?");
+    await screen.findByText("Where did my time go, and what grew or shrank?");
     fireEvent.change(screen.getByLabelText("Replace calendar file"), { target: { files: [file("work.ics")] } });
 
     const sheet = await screen.findByRole("dialog", { name: "This file looks different" });
@@ -148,7 +148,7 @@ describe("other pages and errors", () => {
   it("shows every settings problem and keeps the form", async () => {
     mockServer(saved(INFO), { "PUT /api/config": () => json({ detail: { message: "These settings can't be saved.", problems: ["timezone: Unknown timezone: 'Mars/Base'"] } }, 422) });
     render(<App />);
-    await screen.findByText("Where did my time go?");
+    await screen.findByText("Where did my time go, and what grew or shrank?");
     fireEvent.click(screen.getByLabelText("Settings"));
     fireEvent.change(screen.getByLabelText("Timezone"), { target: { value: "Mars/Base" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -158,7 +158,7 @@ describe("other pages and errors", () => {
   it("saves settings and re-runs the analysis", async () => {
     mockServer(saved(INFO), { "PUT /api/config": () => json({ ...fixtureConfig, source: "config.yaml" }) });
     render(<App />);
-    await screen.findByText("Where did my time go?");
+    await screen.findByText("Where did my time go, and what grew or shrank?");
     fireEvent.click(screen.getByLabelText("Settings"));
     fireEvent.click(screen.getByLabelText("Saturday"));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -180,5 +180,64 @@ describe("data as of", () => {
     const old = asOfLabel("2025-09-05T09:58:00Z", now);
     expect(old.stale).toBe(true);
     expect(old.text).toMatch(/3 days ago/);
+  });
+});
+
+describe("pages in the URL (Stage 3.5 Part B)", () => {
+  it("opens Rhythm from the nav, puts it in the path and comes back with Back", async () => {
+    await returningUser();
+
+    fireEvent.click(screen.getByRole("button", { name: "Rhythm" }));
+
+    expect(await screen.findByText("When do I sleep, and how regular is it?")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/rhythm");
+
+    window.history.back();
+    await waitFor(() => expect(window.location.pathname).toBe("/overview"));
+    expect(await screen.findByText("Where did my time go, and what grew or shrank?")).toBeInTheDocument();
+  });
+
+  it("opens straight into Rhythm when the URL says so, keeping the period", async () => {
+    window.history.replaceState(null, "", "/rhythm?period=1w");
+    mockServer(saved(INFO));
+    render(<App />);
+
+    expect(await screen.findByText("What does an average day look like, and do my days off differ?")).toBeInTheDocument();
+    expect(posts("/api/analyze")[0].url).toContain("period=1w");
+  });
+
+  it("frames the charts the period is too short for, with their reasons", async () => {
+    window.history.replaceState(null, "", "/rhythm");
+    mockServer(saved(INFO));
+    render(<App />);
+    await screen.findByText("When do I sleep, and how regular is it?");
+
+    expect(screen.getByText(/needs 14 nights with sleep/)).toBeInTheDocument();
+    expect(screen.getByText(/life barcode needs 30 days or more/)).toBeInTheDocument();
+    expect(screen.getByText(/each weekday at least twice/)).toBeInTheDocument();
+  });
+});
+
+describe("the previous period (Stage 3.5 Part B)", () => {
+  /** The fixture's calendar starts on the period's first day, so nothing is comparable by default. */
+  const reachingBack = () => json({
+    ...fixtureAnalysis, calendar: { first_day: "2025-01-01", last_day: "2025-09-08" },
+  });
+
+  it("asks for the equal-length period before this one and shows it on the tiles", async () => {
+    mockServer(saved(INFO), { "POST /api/analyze": reachingBack });
+    render(<App />);
+    await screen.findByText("Where did my time go, and what grew or shrank?");
+
+    await waitFor(() => expect(posts("/api/analyze")).toHaveLength(2));
+    expect(posts("/api/analyze")[1].url).toBe("/api/analyze?start=2025-08-24&end=2025-08-31");
+    expect(screen.getAllByText(/^prev\./).length).toBeGreaterThan(0);
+  });
+
+  it("explains in O1's caption when the calendar does not reach back", async () => {
+    await returningUser();
+
+    expect(posts("/api/analyze")).toHaveLength(1);  // nothing to compare: no second call
+    expect(screen.getByText(/No previous period: your calendar starts on Mon 1 Sep/)).toBeInTheDocument();
   });
 });

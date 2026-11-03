@@ -4,20 +4,20 @@ import CalendarSlot from "./components/CalendarSlot";
 import Sheet, { Toast } from "./components/Sheet";
 import DataQuality from "./pages/DataQuality";
 import Overview from "./pages/Overview";
+import Rhythm from "./pages/Rhythm";
 import SettingsPage from "./pages/Settings";
 import Welcome from "./pages/Welcome";
 import {
   analyze, ApiError, checkCalendar, getCalendar, getPeriods, getSettings, pickFile, removeCalendar, restoreCalendar,
   saveCalendar, saveSettings, type PickedFile,
 } from "./lib/api";
-import { totals, type Ctx } from "./lib/aggregate";
-import { fmtRange } from "./lib/format";
+import { previousRange, totals, type Ctx } from "./lib/aggregate";
+import { fmtDay, fmtRange } from "./lib/format";
+import { useRoute, type Page } from "./lib/router";
 import { todayIn } from "./lib/time";
 import type {
   Analysis, Block, CalendarCheck, CalendarState, Period, PeriodPreset, Settings,
 } from "./lib/types";
-
-type Page = "overview" | "quality" | "settings";
 
 function periodFromUrl(): Period {
   const q = new URLSearchParams(window.location.search);
@@ -38,7 +38,7 @@ const WARNING_TEXT: Record<string, (w: { current: number | string; new: number |
 };
 
 export default function App() {
-  const [page, setPage] = useState<Page>("overview");
+  const [page, setPage] = useRoute();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [source, setSource] = useState("");
   const [presets, setPresets] = useState<PeriodPreset[]>([]);
@@ -46,6 +46,8 @@ export default function App() {
   const [calendar, setCalendar] = useState<CalendarState | null>(null);
   const [welcomeStep, setWelcomeStep] = useState<1 | 2>(1);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [previous, setPrevious] = useState<Analysis | null>(null);
+  const [noPrevious, setNoPrevious] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "updating">("idle");
   const [error, setError] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<{ title: string; blocks: Block[] } | null>(null);
@@ -63,8 +65,19 @@ export default function App() {
     inFlight.current = controller;
     setStatus(keepOld ? "updating" : "loading");
     try {
-      setAnalysis(await analyze(which, controller.signal));
+      const fresh = await analyze(which, controller.signal);
+      setAnalysis(fresh);
       setError(null);
+      const before = previousRange(fresh, "preset" in which ? which.preset : null);
+      if ("unavailable" in before) {
+        setPrevious(null);
+        setNoPrevious(before.calendarFirstDay
+          ? `No previous period: your calendar starts on ${fmtDay(before.calendarFirstDay)}.`
+          : "No previous period: the calendar file has no events.");
+      } else {
+        setNoPrevious(null);
+        setPrevious(await analyze({ start: before.start, end: before.end }, controller.signal));
+      }
     } catch (e) {
       if ((e as Error).name === "AbortError") return;
       setError((e as Error).message);  // on error the previous results stay
@@ -133,6 +146,7 @@ export default function App() {
     setConfirmRemove(false);
     setCalendar(await removeCalendar());
     setAnalysis(null);
+    setPrevious(null);
     setWelcomeStep(1);
     setPage("overview");
   };
@@ -189,6 +203,10 @@ export default function App() {
     const asOf = calendar?.calendar?.data_as_of;
     return { analysis, settings, today: todayIn(tz), dataAsOf: asOf ? todayIn(tz, new Date(asOf)) : null };
   }, [analysis, settings, calendar]);
+  const previousCtx: Ctx | null = useMemo(
+    () => (previous && settings && ctx ? { ...ctx, analysis: previous } : null),
+    [previous, settings, ctx],
+  );
   const issueCount = ctx ? totals(ctx).issues : 0;
   const hasCalendar = !!calendar?.calendar;
 
@@ -215,7 +233,11 @@ export default function App() {
             onCustom={setCustomOpen} onPeriod={choosePeriod} />
           <main className={status === "updating" ? "updating" : ""}>
             {error && <div className="notice error" role="alert">{error}</div>}
-            {page === "overview" && <Overview ctx={ctx} onShowBlocks={(title, blocks) => setDrawer({ title, blocks })} onUsePreset={(p) => { setCustomOpen(false); choosePeriod({ preset: p }); }} />}
+            {page === "overview" && <Overview ctx={ctx} previous={previousCtx} noPrevious={noPrevious}
+              onShowBlocks={(title, blocks) => setDrawer({ title, blocks })}
+              onUsePreset={(p) => { setCustomOpen(false); choosePeriod({ preset: p }); }} />}
+            {page === "rhythm" && <Rhythm ctx={ctx} onShowBlocks={(title, blocks) => setDrawer({ title, blocks })}
+              onUsePreset={(p) => { setCustomOpen(false); choosePeriod({ preset: p }); }} />}
             {page === "quality" && <DataQuality ctx={ctx} onOpenSettings={() => setPage("settings")} />}
             {page === "settings" && <SettingsPage settings={settings!} source={source} onSave={onSaveSettings} />}
           </main>
@@ -283,7 +305,9 @@ function TopBar({ page, setPage, hasData, issues, slot }: { page: Page; setPage:
       <span className="brand">Time Analyzer</span>
       {hasData && (
         <div className="nav">
-          <button aria-current={page === "overview" ? "page" : undefined} onClick={() => setPage("overview")}>Overview</button>
+          {([["overview", "Overview"], ["rhythm", "Rhythm"]] as const).map(([id, label]) => (
+            <button key={id} aria-current={page === id ? "page" : undefined} onClick={() => setPage(id)}>{label}</button>
+          ))}
         </div>
       )}
       <div className="right">

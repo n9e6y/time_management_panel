@@ -63,3 +63,29 @@ export function todayIn(tz: string, now: Date = new Date()): string {
 export function minutesOfDay(isoLocal: string): number {
   return Number(isoLocal.slice(11, 13)) * 60 + Number(isoLocal.slice(14, 16));
 }
+
+// --- months (the "vs previous period" rule for calendar presets, and O3/R5 month buckets) ------
+
+/** First day of the month a day falls in. */
+export function startOfMonth(day: string): string {
+  return `${day.slice(0, 7)}-01`;
+}
+
+/** Shift a day by whole months, keeping the day of the month (clamped to the month's length). */
+export function addMonths(day: string, n: number): string {
+  const [y, m, d] = parts(day);
+  const target = new Date(Date.UTC(y, m - 1 + n, 1));
+  const length = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  return `${target.toISOString().slice(0, 8)}${String(Math.min(d, length)).padStart(2, "0")}`;
+}
+
+/** Last day of the month a day falls in. */
+export function endOfMonth(day: string): string {
+  return addDays(addMonths(startOfMonth(day), 1), -1);
+}
+
+/** Start of the week a day falls in, following the user's week_start. */
+export function weekStartOf(day: string, weekStart: string): string {
+  const names = weekdaysFrom(weekStart);
+  return addDays(day, -names.indexOf(weekdayOf(day)));
+}
